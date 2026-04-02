@@ -90,6 +90,7 @@ contract LandRegistry is ReentrancyGuard {
         });
 
 
+
         history[landId].push(OwnershipRecord({
             previousOwner: address(0),
             newOwner: _owner,

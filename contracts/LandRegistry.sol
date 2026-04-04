@@ -28,8 +28,9 @@ contract LandRegistry is ReentrancyGuard {
     }
 
     // ── STATE VARIABLES ──────────────────────────────
-    address public government;
-    address public bank;
+    address public government;  // can register land
+    address public bank;        // can add/remove liens
+
     mapping(uint256 => LandParcel) public lands;
     mapping(uint256 => OwnershipRecord[]) public history;
     mapping(uint256 => address) public lienHolder;
@@ -44,20 +45,22 @@ contract LandRegistry is ReentrancyGuard {
 
     // ── MODIFIERS ────────────────────────────────────
     modifier onlyGov() {
-        require(msg.sender == government, "Not government");
+        require(msg.sender == government, "Only government can do this");
         _;
     }
     modifier onlyBank() {
-        require(msg.sender == bank, "Not bank");
+        require(msg.sender == bank, "Only bank can do this");
         _;
     }
     modifier onlyOwner(uint256 id) {
-        require(msg.sender == lands[id].owner, "Not owner");
+        require(msg.sender == lands[id].owner, "You are not the owner");
         _;
     }
 
     // ── CONSTRUCTOR ──────────────────────────────────
     constructor(address _gov, address _bank) {
+        require(_gov  != address(0), "Invalid government address");
+        require(_bank != address(0), "Invalid bank address");
         government = _gov;
         bank = _bank;
     }
@@ -74,6 +77,8 @@ contract LandRegistry is ReentrancyGuard {
 
    require(!lands[landId].isRegistered, "Land already registered");
    require(_owner != address(0), "Invalid owner");  
+   require(areaSqMeters > 0,                  "Area must be > 0");
+   require(bytes(gpsCoordinates).length > 0,  "GPS required");
 
    lands[landId] = LandParcel({
             landId: landId,
@@ -101,12 +106,29 @@ contract LandRegistry is ReentrancyGuard {
         emit LandRegistered(landId, _owner);
     }
 
+
     function getLandDetails(uint256 landId) public view landExists(landId) returns (LandParcel memory)
     {
         return lands[landId];
     }
 
-    // Day 3: listForSale() + buyLand()
+
+    function listForSale(uint256 landId, uint256 price)
+        public
+        landExists(landId)
+        onlyOwner(landId)
+    {
+        require(!lands[landId].isDisputed, "Cannot list disputed land");
+        require(!lands[landId].hasLien,    "Cannot list land with a lien");
+        require(!lands[landId].isForSale,  "Already listed for sale");
+        require(price > 0,                 "Price must be > 0");
+
+        // "storage" = direct reference to blockchain state (modifies in place)
+        lands[landId].isForSale = true;
+        lands[landId].salePrice = price;
+
+        emit ListedForSale(landId, price);
+    }
     // Day 3: getLandHistory() + verifyLand()
     // Day 3: addLien() + removeLien()
     // Day 3: fileDispute() + resolveDispute()

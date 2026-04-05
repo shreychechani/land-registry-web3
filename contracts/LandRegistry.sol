@@ -27,6 +27,8 @@ contract LandRegistry is ReentrancyGuard {
         uint256 timestamp;
     }
 
+
+
     // ── STATE VARIABLES ──────────────────────────────
     address public government;  // can register land
     address public bank;        // can add/remove liens
@@ -141,8 +143,39 @@ contract LandRegistry is ReentrancyGuard {
 
         emit SaleCancelled(landId);
     }
+
+
+    function getLandHistory(uint256 landId)
+        public
+        view
+        landExists(landId)
+        returns (OwnershipRecord[] memory)
+    {
+        return history[landId];
+    }
+
+
+    function verifyLand(uint256 landId)
+        public
+        view
+        returns (
+            bool    registered,
+            address owner,
+            bool    isForSale,
+            bool    hasLien,
+            bool    isDisputed
+        )
+    {
+        LandParcel memory land = lands[landId];
+        return (
+            land.isRegistered,
+            land.owner,
+            land.isForSale,
+            land.hasLien,
+            land.isDisputed
+        );
+    }
     
-    // Day 3: getLandHistory() + verifyLand()
     // Day 3: addLien() + removeLien()
     // Day 3: fileDispute() + resolveDispute()
 }

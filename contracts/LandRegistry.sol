@@ -123,12 +123,25 @@ contract LandRegistry is ReentrancyGuard {
         require(!lands[landId].isForSale,  "Already listed for sale");
         require(price > 0,                 "Price must be > 0");
 
-        // "storage" = direct reference to blockchain state (modifies in place)
         lands[landId].isForSale = true;
         lands[landId].salePrice = price;
 
         emit ListedForSale(landId, price);
     }
+
+    function cancelListing(uint256 landId)
+        public
+        landExists(landId)
+        onlyOwner(landId)
+    {
+        require(lands[landId].isForSale, "Not listed for sale");
+
+        lands[landId].isForSale = false;
+        lands[landId].salePrice = 0;
+
+        emit SaleCancelled(landId);
+    }
+    
     // Day 3: getLandHistory() + verifyLand()
     // Day 3: addLien() + removeLien()
     // Day 3: fileDispute() + resolveDispute()

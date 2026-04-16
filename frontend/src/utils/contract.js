@@ -5,27 +5,738 @@
 import { ethers } from 'ethers';
 
 // ── PASTE YOUR DEPLOYED CONTRACT ADDRESS HERE AFTER RUNNING deploy.js ──
-export const CONTRACT_ADDRESS = 'YOUR_CONTRACT_ADDRESS_HERE';
+export const CONTRACT_ADDRESS = '0x5FbDB2315678afecb367f032d93F642f64180aa3';
 
 // ── PASTE YOUR CONTRACT ABI HERE AFTER RUNNING: npx hardhat compile ──
 // The ABI is in: artifacts/contracts/LandRegistry.sol/LandRegistry.json
 export const CONTRACT_ABI = [
-  "function registerLand(uint256 landId, address owner, string gps, uint256 area, string docHash) public",
-  "function listForSale(uint256 landId, uint256 price) public",
-  "function buyLand(uint256 landId) public payable",
-  "function getLandDetails(uint256 landId) public view returns (address owner, string memory gps, uint256 area, string memory docHash, bool isForSale, bool hasLien, bool isDisputed)",
-  "function getLandHistory(uint256 landId) public view returns (tuple(address previousOwner, address newOwner, uint256 price, uint256 timestamp)[])",
-  "function verifyLand(uint256 landId) public view returns (bool isRegistered, bool hasCleanTitle, address currentOwner, uint256 totalTransfers, string memory status)",
-  "function addLien(uint256 landId, address lender) public",
-  "function removeLien(uint256 landId) public",
-  "function fileDispute(uint256 landId, string evidenceHash) public",
-  "function resolveDispute(uint256 landId, address rightfulOwner, string resolutionNotes) public",
-  "event LandRegistered(uint256 landId, address owner)",
-  "event OwnershipTransferred(uint256 landId, address from, address to)",
-  "event LienAdded(uint256 landId, address bank)",
-  "event LienRemoved(uint256 landId)",
-  "event DisputeFiled(uint256 landId)",
-  "event DisputeResolved(uint256 landId, address rightfulOwner)",
+ 
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			}
+		],
+		"name": "addLien",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			}
+		],
+		"name": "buyLand",
+		"outputs": [],
+		"stateMutability": "payable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			}
+		],
+		"name": "cancelListing",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			},
+			{
+				"internalType": "string",
+				"name": "evidenceHash",
+				"type": "string"
+			}
+		],
+		"name": "fileDispute",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "address",
+				"name": "_gov",
+				"type": "address"
+			},
+			{
+				"internalType": "address",
+				"name": "_bank",
+				"type": "address"
+			}
+		],
+		"stateMutability": "nonpayable",
+		"type": "constructor"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{
+				"indexed": false,
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			},
+			{
+				"indexed": false,
+				"internalType": "address",
+				"name": "filer",
+				"type": "address"
+			}
+		],
+		"name": "DisputeFiled",
+		"type": "event"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{
+				"indexed": false,
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			},
+			{
+				"indexed": false,
+				"internalType": "address",
+				"name": "rightfulOwner",
+				"type": "address"
+			}
+		],
+		"name": "DisputeResolved",
+		"type": "event"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{
+				"indexed": false,
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			},
+			{
+				"indexed": false,
+				"internalType": "address",
+				"name": "buyer",
+				"type": "address"
+			},
+			{
+				"indexed": false,
+				"internalType": "uint256",
+				"name": "price",
+				"type": "uint256"
+			}
+		],
+		"name": "LandBought",
+		"type": "event"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{
+				"indexed": false,
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			},
+			{
+				"indexed": false,
+				"internalType": "address",
+				"name": "owner",
+				"type": "address"
+			}
+		],
+		"name": "LandRegistered",
+		"type": "event"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{
+				"indexed": false,
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			},
+			{
+				"indexed": false,
+				"internalType": "address",
+				"name": "bank",
+				"type": "address"
+			}
+		],
+		"name": "LienAdded",
+		"type": "event"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{
+				"indexed": false,
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			}
+		],
+		"name": "LienRemoved",
+		"type": "event"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{
+				"indexed": false,
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			},
+			{
+				"indexed": false,
+				"internalType": "uint256",
+				"name": "price",
+				"type": "uint256"
+			}
+		],
+		"name": "ListedForSale",
+		"type": "event"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			},
+			{
+				"internalType": "uint256",
+				"name": "price",
+				"type": "uint256"
+			}
+		],
+		"name": "listForSale",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{
+				"indexed": false,
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			},
+			{
+				"indexed": false,
+				"internalType": "address",
+				"name": "from",
+				"type": "address"
+			},
+			{
+				"indexed": false,
+				"internalType": "address",
+				"name": "to",
+				"type": "address"
+			}
+		],
+		"name": "OwnershipTransferred",
+		"type": "event"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			},
+			{
+				"internalType": "address",
+				"name": "_owner",
+				"type": "address"
+			},
+			{
+				"internalType": "string",
+				"name": "gpsCoordinates",
+				"type": "string"
+			},
+			{
+				"internalType": "uint256",
+				"name": "areaSqMeters",
+				"type": "uint256"
+			},
+			{
+				"internalType": "string",
+				"name": "documentHash",
+				"type": "string"
+			}
+		],
+		"name": "registerLand",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			}
+		],
+		"name": "removeLien",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			},
+			{
+				"internalType": "address",
+				"name": "rightfulOwner",
+				"type": "address"
+			},
+			{
+				"internalType": "string",
+				"name": "resolutionNotes",
+				"type": "string"
+			}
+		],
+		"name": "resolveDispute",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{
+				"indexed": false,
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			}
+		],
+		"name": "SaleCancelled",
+		"type": "event"
+	},
+	{
+		"inputs": [],
+		"name": "bank",
+		"outputs": [
+			{
+				"internalType": "address",
+				"name": "",
+				"type": "address"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "",
+				"type": "uint256"
+			}
+		],
+		"name": "disputes",
+		"outputs": [
+			{
+				"internalType": "address",
+				"name": "filer",
+				"type": "address"
+			},
+			{
+				"internalType": "string",
+				"name": "evidenceHash",
+				"type": "string"
+			},
+			{
+				"internalType": "uint256",
+				"name": "filedAt",
+				"type": "uint256"
+			},
+			{
+				"internalType": "bool",
+				"name": "resolved",
+				"type": "bool"
+			},
+			{
+				"internalType": "string",
+				"name": "resolution",
+				"type": "string"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			}
+		],
+		"name": "getDispute",
+		"outputs": [
+			{
+				"components": [
+					{
+						"internalType": "address",
+						"name": "filer",
+						"type": "address"
+					},
+					{
+						"internalType": "string",
+						"name": "evidenceHash",
+						"type": "string"
+					},
+					{
+						"internalType": "uint256",
+						"name": "filedAt",
+						"type": "uint256"
+					},
+					{
+						"internalType": "bool",
+						"name": "resolved",
+						"type": "bool"
+					},
+					{
+						"internalType": "string",
+						"name": "resolution",
+						"type": "string"
+					}
+				],
+				"internalType": "struct LandRegistry.Dispute",
+				"name": "",
+				"type": "tuple"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			}
+		],
+		"name": "getLandDetails",
+		"outputs": [
+			{
+				"components": [
+					{
+						"internalType": "uint256",
+						"name": "landId",
+						"type": "uint256"
+					},
+					{
+						"internalType": "address",
+						"name": "owner",
+						"type": "address"
+					},
+					{
+						"internalType": "string",
+						"name": "gpsCoordinates",
+						"type": "string"
+					},
+					{
+						"internalType": "uint256",
+						"name": "areaSqMeters",
+						"type": "uint256"
+					},
+					{
+						"internalType": "string",
+						"name": "documentHash",
+						"type": "string"
+					},
+					{
+						"internalType": "bool",
+						"name": "isRegistered",
+						"type": "bool"
+					},
+					{
+						"internalType": "bool",
+						"name": "isForSale",
+						"type": "bool"
+					},
+					{
+						"internalType": "uint256",
+						"name": "salePrice",
+						"type": "uint256"
+					},
+					{
+						"internalType": "bool",
+						"name": "hasLien",
+						"type": "bool"
+					},
+					{
+						"internalType": "bool",
+						"name": "isDisputed",
+						"type": "bool"
+					},
+					{
+						"internalType": "uint256",
+						"name": "registeredAt",
+						"type": "uint256"
+					}
+				],
+				"internalType": "struct LandRegistry.LandParcel",
+				"name": "",
+				"type": "tuple"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			}
+		],
+		"name": "getLandHistory",
+		"outputs": [
+			{
+				"components": [
+					{
+						"internalType": "address",
+						"name": "previousOwner",
+						"type": "address"
+					},
+					{
+						"internalType": "address",
+						"name": "newOwner",
+						"type": "address"
+					},
+					{
+						"internalType": "uint256",
+						"name": "price",
+						"type": "uint256"
+					},
+					{
+						"internalType": "uint256",
+						"name": "timestamp",
+						"type": "uint256"
+					}
+				],
+				"internalType": "struct LandRegistry.OwnershipRecord[]",
+				"name": "",
+				"type": "tuple[]"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [],
+		"name": "government",
+		"outputs": [
+			{
+				"internalType": "address",
+				"name": "",
+				"type": "address"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "",
+				"type": "uint256"
+			},
+			{
+				"internalType": "uint256",
+				"name": "",
+				"type": "uint256"
+			}
+		],
+		"name": "history",
+		"outputs": [
+			{
+				"internalType": "address",
+				"name": "previousOwner",
+				"type": "address"
+			},
+			{
+				"internalType": "address",
+				"name": "newOwner",
+				"type": "address"
+			},
+			{
+				"internalType": "uint256",
+				"name": "price",
+				"type": "uint256"
+			},
+			{
+				"internalType": "uint256",
+				"name": "timestamp",
+				"type": "uint256"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "",
+				"type": "uint256"
+			}
+		],
+		"name": "lands",
+		"outputs": [
+			{
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			},
+			{
+				"internalType": "address",
+				"name": "owner",
+				"type": "address"
+			},
+			{
+				"internalType": "string",
+				"name": "gpsCoordinates",
+				"type": "string"
+			},
+			{
+				"internalType": "uint256",
+				"name": "areaSqMeters",
+				"type": "uint256"
+			},
+			{
+				"internalType": "string",
+				"name": "documentHash",
+				"type": "string"
+			},
+			{
+				"internalType": "bool",
+				"name": "isRegistered",
+				"type": "bool"
+			},
+			{
+				"internalType": "bool",
+				"name": "isForSale",
+				"type": "bool"
+			},
+			{
+				"internalType": "uint256",
+				"name": "salePrice",
+				"type": "uint256"
+			},
+			{
+				"internalType": "bool",
+				"name": "hasLien",
+				"type": "bool"
+			},
+			{
+				"internalType": "bool",
+				"name": "isDisputed",
+				"type": "bool"
+			},
+			{
+				"internalType": "uint256",
+				"name": "registeredAt",
+				"type": "uint256"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "",
+				"type": "uint256"
+			}
+		],
+		"name": "lienHolder",
+		"outputs": [
+			{
+				"internalType": "address",
+				"name": "",
+				"type": "address"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "landId",
+				"type": "uint256"
+			}
+		],
+		"name": "verifyLand",
+		"outputs": [
+			{
+				"internalType": "bool",
+				"name": "isRegistered",
+				"type": "bool"
+			},
+			{
+				"internalType": "bool",
+				"name": "hasCleanTitle",
+				"type": "bool"
+			},
+			{
+				"internalType": "address",
+				"name": "currentOwner",
+				"type": "address"
+			},
+			{
+				"internalType": "uint256",
+				"name": "totalTransfers",
+				"type": "uint256"
+			},
+			{
+				"internalType": "string",
+				"name": "status",
+				"type": "string"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	}
+
 ];
 
 // Connect wallet and return contract instance

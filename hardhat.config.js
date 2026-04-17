@@ -1,20 +1,12 @@
-require("@nomicfoundation/hardhat-ethers");
+require("@nomicfoundation/hardhat-toolbox");
+//  hardhat-toolbox already includes hardhat-chai-matchers,
+//    hardhat-ethers, and hardhat-network-helpers — this single
+//    import is all you need. Do NOT import them separately.
 
+/** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
-  solidity: {
-    version: "0.8.20",
-    settings: {
-      optimizer: { enabled: true, runs: 200 },
-      evmVersion: "london"
-    }
-  },
+  solidity: "0.8.20",
   networks: {
-    hardhat: {
-      chainId: 31337
-    },
-    localhost: {
-      url: "http://127.0.0.1:8545",
-      chainId: 31337
-    }
-  }
+    hardhat: {},
+  },
 };

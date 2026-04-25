@@ -1,285 +1,359 @@
-import { useState, useEffect } from 'react';
+// pages/Marketplace.jsx
+import { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
-import { getContract } from '../utils/contract';
-import { geocodeAddress, calculateDistance, parseCoordinates } from '../utils/location';
+import { getContract, getReadContract, shortAddr } from '../utils/contract';
+import { geocodeAddress, calculateDistance, parseCoordinates, getUserLocation } from '../utils/location';
 
-// Demo listings for UI testing (Includes Jaipur example)
-const DEMO_LISTINGS = [
-  { landId: 101, owner: '0x1234...abcd', gps: '28.6139° N, 77.2090° E', area: 500, price: '0.5', isForSale: true },
-  { landId: 1001, owner: '0xf39F...2266', gps: '26.9124° N, 75.7873° E', area: 750, price: '2.5', isForSale: true },
-  { landId: 102, owner: '0x5678...efgh', gps: '19.0760° N, 72.8777° E', area: 1200, price: '1.2', isForSale: true },
-];
-
-/**
- * Marketplace Component
- * Features:
- * 1. Browse nearby land using location-based search (Geocoding).
- * 2. List property for sale on the blockchain.
- * 3. Secure ownership transfer via buy functionality.
- */
 export default function Marketplace() {
-  const [allListings, setAllListings] = useState(DEMO_LISTINGS);
-  const [displayListings, setDisplayListings] = useState(DEMO_LISTINGS);
+  const [tab, setTab] = useState('browse');
+  const [allListings, setAllListings] = useState([]);
+  const [displayListings, setDisplayListings] = useState([]);
   const [listForm, setListForm] = useState({ landId: '', price: '' });
+  const [cancelId, setCancelId] = useState('');
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(null);
-  const [tab, setTab] = useState('browse');
-
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
+  const [userLocation, setUserLocation] = useState(null);
+  const [locating, setLocating] = useState(false);
 
-  /**
-   * handleSearch
-   * Leverages geocoding to find land within a 15km radius of a searched location.
-   */
+  const loadListings = useCallback(async () => {
+    try {
+      const contract = getReadContract();
+      const ids = await contract.getForSaleLands();
+      const details = await Promise.all(
+        ids.map(id => contract.getLandDetails(Number(id)).catch(() => null))
+      );
+      const listings = details.filter(Boolean).map(land => ({
+        landId:   Number(land.landId),
+        owner:    land.owner,
+        gps:      land.gpsCoordinates,
+        area:     Number(land.areaSqMeters),
+        price:    ethers.formatEther(land.salePrice),
+        priceWei: land.salePrice,
+        title:    land.title || `Land #${Number(land.landId)}`,
+        docHash:  land.documentHash,
+        isForSale: land.isForSale,
+      }));
+      setAllListings(listings);
+      setDisplayListings(listings);
+    } catch (err) {
+      setStatus('⚠️ Could not load listings: ' + (err.reason || err.message));
+    }
+  }, []);
+
+  useEffect(() => { loadListings(); }, [loadListings]);
+
+  const handleLocateMe = async () => {
+    setLocating(true);
+    setStatus('📡 Getting your location...');
+    try {
+      const loc = await getUserLocation();
+      setUserLocation(loc);
+      filterByDistance(loc, allListings);
+      setStatus('📍 Showing lands near your location (within 50km)');
+    } catch (err) {
+      setStatus('❌ ' + err.message + '. Try searching by city name instead.');
+    }
+    setLocating(false);
+  };
+
+  const filterByDistance = (center, listings, radiusKm = 50) => {
+    const filtered = listings
+      .filter(land => {
+        const coords = parseCoordinates(land.gps);
+        if (!coords) return false;
+        const dist = calculateDistance(center.lat, center.lon, coords.lat, coords.lon);
+        land._distance = Math.round(dist);
+        return dist <= radiusKm;
+      })
+      .sort((a, b) => (a._distance || 0) - (b._distance || 0));
+    setDisplayListings(filtered);
+    if (filtered.length === 0) setStatus('No listings found within 50km of your location.');
+  };
+
   const handleSearch = async (e) => {
     e.preventDefault();
-    if (!searchQuery.trim()) {
-      setDisplayListings(allListings);
-      setStatus('');
-      return;
-    }
-
+    if (!searchQuery.trim()) { setDisplayListings(allListings); setStatus(''); return; }
     setIsSearching(true);
-    setStatus('🔍 Analyzing location: ' + searchQuery + '...');
-
+    setStatus(`🔍 Searching for "${searchQuery}"...`);
     try {
-      const targetLoc = await geocodeAddress(searchQuery);
-      if (!targetLoc) {
-        setStatus('❌ Location not found. Try "Jaipur" or "Mansarovar".');
+      const loc = await geocodeAddress(searchQuery);
+      if (!loc) {
+        setStatus('❌ Location not found. Try "Jaipur", "Delhi", or "Mumbai".');
         setIsSearching(false);
         return;
       }
-
-      setStatus(`📍 Showing lands within 20km of ${targetLoc.displayName.split(',')[0]}...`);
-
-      const filtered = allListings.filter(land => {
-        const landCoords = parseCoordinates(land.gps);
-        if (!landCoords) return false;
-
-        const dist = calculateDistance(
-          targetLoc.lat, targetLoc.lon,
-          landCoords.lat, landCoords.lon
-        );
-
-        return dist <= 20;
-      });
-
-      setDisplayListings(filtered);
-
-      if (filtered.length === 0) {
-        setStatus('No properties currently listed in this specific area.');
-      } else {
-        setStatus(`Found ${filtered.length} matching result(s).`);
-      }
-    } catch (err) {
-      setStatus('Search failed. Please try again.');
+      const place = loc.displayName.split(',')[0];
+      filterByDistance(loc, allListings, 50);
+      setStatus(`📍 Showing lands within 50km of ${place} (OpenStreetMap)`);
+    } catch {
+      setStatus('❌ Search failed. Check your connection and try again.');
     }
     setIsSearching(false);
   };
 
-  /**
-   * handleBuy
-   * Executes the blockchain purchase of a land parcel.
-   */
+  const resetSearch = () => {
+    setSearchQuery('');
+    setDisplayListings(allListings);
+    setStatus('');
+    setUserLocation(null);
+  };
+
   const handleBuy = async (land) => {
     setLoading(land.landId);
     setStatus('');
     try {
       const contract = await getContract();
-      const priceInWei = ethers.parseUnits(land.price.toString(), 'ether');
-
-      const tx = await contract.buyLand(land.landId, {
-        value: priceInWei
-      });
-
-      setStatus('Confirming transaction on blockchain...');
+      const tx = await contract.buyLand(land.landId, { value: land.priceWei });
+      setStatus('⏳ Confirming transaction on blockchain...');
       await tx.wait();
-
-      setStatus(`Success! You are now the legal owner of Land #${land.landId}.`);
-
-      // Update UI state
-      const updated = allListings.filter(x => x.landId !== land.landId);
-      setAllListings(updated);
-      setDisplayListings(updated);
+      setStatus(`✅ You are now the legal owner of ${land.title}! Check History to see the ownership transfer.`);
+      await loadListings();
     } catch (err) {
-      setStatus('❌ ' + (err.reason || "Transaction failed."));
+      setStatus('❌ ' + (err.reason || err.message || 'Transaction failed.'));
     }
     setLoading(null);
   };
 
-  /**
-   * handleList
-   * Lists a user-owned land parcel for sale on the marketplace.
-   */
   const handleList = async (e) => {
     e.preventDefault();
     if (!listForm.landId || !listForm.price) {
-      setStatus('Please provide both Land ID and Asking Price.');
-      return;
+      setStatus('❌ Please provide both Land ID and price.'); return;
     }
-
     setLoading('list');
-    setStatus('Processing listing on blockchain...');
-
+    setStatus('⏳ Listing on blockchain...');
     try {
       const contract = await getContract();
-      const priceInWei = ethers.parseUnits(listForm.price.toString(), 'ether');
-
-      const tx = await contract.listForSale(listForm.landId, priceInWei);
-
-      setStatus('Waiting for block confirmation...');
+      const priceWei = ethers.parseEther(listForm.price);
+      const tx = await contract.listForSale(parseInt(listForm.landId), priceWei);
       await tx.wait();
-
-      setStatus(`Success! Land #${listForm.landId} is now listed for ${listForm.price} ETH.`);
+      setStatus(`✅ Land #${listForm.landId} is now listed for ${listForm.price} MATIC!`);
       setListForm({ landId: '', price: '' });
-
+      await loadListings();
     } catch (err) {
-      setStatus('❌ ' + (err.reason || "Only the land owner can list this property."));
+      setStatus('❌ ' + (err.reason || err.message || 'Only the land owner can list this.'));
+    }
+    setLoading(null);
+  };
+
+  const handleCancelSale = async (e) => {
+    e.preventDefault();
+    if (!cancelId) { setStatus('❌ Enter a Land ID to cancel.'); return; }
+    setLoading('cancel');
+    setStatus('⏳ Cancelling sale...');
+    try {
+      const contract = await getContract();
+      const tx = await contract.cancelSale(parseInt(cancelId));
+      await tx.wait();
+      setStatus(`✅ Sale for Land #${cancelId} has been cancelled.`);
+      setCancelId('');
+      await loadListings();
+    } catch (err) {
+      setStatus('❌ ' + (err.reason || err.message || 'Only the owner can cancel this listing.'));
     }
     setLoading(null);
   };
 
   const TabBtn = ({ id, label }) => (
-    <button onClick={() => setTab(id)} style={{
-      padding: '12px 28px', borderRadius: 12, border: 'none', fontSize: 14, fontWeight: 800,
-      background: tab === id ? '#48a07c' : 'transparent',
-      color: tab === id ? '#fff' : '#888',
-      transition: '0.2s', cursor: 'pointer', letterSpacing: '0.05em'
+    <button onClick={() => { setTab(id); setStatus(''); }} style={{
+      padding: '10px 24px', borderRadius: 10, border: 'none', fontSize: 14, fontWeight: 700,
+      background: tab === id ? 'var(--accent)' : 'transparent',
+      color: tab === id ? '#fff' : 'var(--text2)',
+      transition: '0.2s', cursor: 'pointer',
     }}>{label}</button>
   );
 
   return (
-    <div style={{ maxWidth: 1050, margin: '0 auto', padding: '50px 25px' }}>
-      <div style={{ textAlign: 'center', marginBottom: 40 }}>
-        <h1 style={{ fontSize: 38, fontWeight: 900, marginBottom: 12, trackingTight: '-0.025em' }}>🤝 Marketplace</h1>
-        <p style={{ color: '#666', fontSize: 16 }}>Securely buy, sell, and verify land parcels on the Polygon network.</p>
+    <div style={{ maxWidth: 1050, margin: '0 auto', padding: '48px 24px' }}>
+      <div style={{ textAlign: 'center', marginBottom: 36 }}>
+        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 36, marginBottom: 8 }}>🤝 Marketplace</h1>
+        <p style={{ color: 'var(--text2)', fontSize: 15 }}>
+          Buy and sell land parcels directly on Polygon — no middlemen.
+        </p>
       </div>
 
-      {/* Primary Navigation */}
-      <div style={{ display: 'flex', gap: 8, background: '#f5f5f5', padding: 6, borderRadius: 16, width: 'fit-content', margin: '0 auto 40px auto' }}>
-        <TabBtn id="browse" label="BROWSE NEARBY" />
-        <TabBtn id="sell" label="LIST PROPERTY" />
+      {/* Tab switcher */}
+      <div style={{ display: 'flex', gap: 6, background: '#f0f0f0', padding: 5, borderRadius: 12, width: 'fit-content', margin: '0 auto 36px', flexWrap: 'wrap' }}>
+        <TabBtn id="browse" label="🔍 Browse Lands" />
+        <TabBtn id="sell" label="🏷️ List My Land" />
+        <TabBtn id="cancel" label="❌ Cancel Listing" />
       </div>
 
+      {/* Status banner */}
       {status && (
         <div style={{
-          padding: '18px 24px', borderRadius: 14, marginBottom: 30,
-          background: status.includes('✅') ? '#ecfdf5' : status.includes('❌') ? '#fff1f2' : '#eff6ff',
-          color: status.includes('✅') ? '#065f46' : status.includes('❌') ? '#991b1b' : '#1e40af',
-          fontWeight: 700, border: '1px solid currentColor', opacity: 0.9, fontSize: 14,
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+          padding: '14px 20px', borderRadius: 10, marginBottom: 24, fontSize: 14, fontWeight: 600,
+          background: status.startsWith('❌') ? '#fff0f0' : status.startsWith('✅') ? '#f0faf5' : '#eff6ff',
+          color: status.startsWith('❌') ? '#c0392b' : status.startsWith('✅') ? '#166534' : '#1e40af',
+          border: '1px solid currentColor', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         }}>
           <span>{status}</span>
-          {searchQuery && tab === 'browse' && (
-            <button onClick={() => { setSearchQuery(''); setDisplayListings(allListings); setStatus(''); }}
-              style={{ background: 'none', border: 'none', color: 'inherit', textDecoration: 'underline', cursor: 'pointer', fontSize: 11 }}>
-              Reset Search
-            </button>
+          {(searchQuery || userLocation) && tab === 'browse' && (
+            <button onClick={resetSearch} style={{
+              background: 'none', border: 'none', color: 'inherit',
+              textDecoration: 'underline', cursor: 'pointer', fontSize: 12, marginLeft: 12,
+            }}>Reset</button>
           )}
         </div>
       )}
 
-      {/* Tab Content: Browse */}
+      {/* ── BROWSE TAB ── */}
       {tab === 'browse' && (
         <>
-          <form onSubmit={handleSearch} style={{ display: 'flex', gap: 12, marginBottom: 40 }}>
-            <input
-              placeholder="Suggest land near... (e.g. Jaipur, Mansarovar)"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              style={{ flex: 1, padding: '18px 24px', borderRadius: 16, border: '2px solid #eee', outline: 'none', fontSize: 16, transition: 'border 0.2s' }}
-              onFocus={(e) => e.target.style.borderColor = '#48a07c'}
-              onBlur={(e) => e.target.style.borderColor = '#eee'}
-            />
-            <button type="submit" disabled={isSearching} style={{ background: '#48a07c', color: '#fff', border: 'none', padding: '0 40px', borderRadius: 16, fontWeight: 900, fontSize: 14, cursor: 'pointer', transition: 'all 0.2s' }}>
-              {isSearching ? '...' : 'SEARCH NEARBY'}
+          {/* Location search */}
+          <div style={{ marginBottom: 32 }}>
+            <form onSubmit={handleSearch} style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+              <input
+                placeholder="Search by city or area — e.g. Jaipur, Mansarovar, Delhi..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                style={{
+                  flex: 1, padding: '14px 18px', borderRadius: 10,
+                  border: '2px solid var(--border)', outline: 'none', fontSize: 15,
+                  background: 'var(--white)',
+                }}
+              />
+              <button type="submit" disabled={isSearching} style={{
+                background: 'var(--accent)', color: '#fff', border: 'none',
+                padding: '0 28px', borderRadius: 10, fontWeight: 700, fontSize: 14, cursor: 'pointer',
+              }}>
+                {isSearching ? '...' : '🗺️ Search'}
+              </button>
+            </form>
+            <button onClick={handleLocateMe} disabled={locating} style={{
+              background: 'var(--white)', border: '1px solid var(--border)', color: 'var(--text)',
+              padding: '9px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}>
+              {locating ? '⏳ Locating...' : '📍 Use My Current Location'}
             </button>
-          </form>
+            <p style={{ fontSize: 12, color: 'var(--text2)', marginTop: 6 }}>
+              Powered by OpenStreetMap — no API key needed. Shows lands within 50km radius.
+            </p>
+          </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 30 }}>
+          <div style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 20 }}>
+            {displayListings.length === 0
+              ? allListings.length === 0
+                ? 'No lands listed for sale yet.'
+                : 'No lands found in this area.'
+              : `Showing ${displayListings.length} land${displayListings.length !== 1 ? 's' : ''} for sale`}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 24 }}>
             {displayListings.map(land => (
               <div key={land.landId} style={{
-                background: '#fff', borderRadius: 28, border: '1px solid #f0f0f0', overflow: 'hidden',
-                boxShadow: '0 10px 25px -5px rgba(0,0,0,0.05)', transition: 'transform 0.3s'
+                background: 'var(--white)', borderRadius: 16, border: '1px solid var(--border)',
+                overflow: 'hidden', boxShadow: 'var(--shadow)', transition: 'transform 0.2s, box-shadow 0.2s',
               }}
-                onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-6px)'}
-                onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = 'var(--shadow-lg)'; }}
+                onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'var(--shadow)'; }}
               >
-                <div style={{ background: 'linear-gradient(to bottom, #f0fdf4, #fff)', padding: 45, textAlign: 'center', fontSize: 56 }}>🏡</div>
-                <div style={{ padding: 28 }}>
+                <div style={{ background: 'linear-gradient(135deg, #f0fdf4, #e0f2fe)', padding: 36, textAlign: 'center', fontSize: 48 }}>🏡</div>
+                <div style={{ padding: '20px 22px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                    <h3 style={{ margin: 0, fontWeight: 900, fontSize: 22 }}>Land #{land.landId}</h3>
-                    <span style={{ fontSize: 10, fontWeight: 900, background: '#ecfdf5', color: '#059669', padding: '4px 10px', borderRadius: 20 }}>VERIFIED</span>
+                    <h3 style={{ margin: 0, fontWeight: 800, fontSize: 18 }}>{land.title}</h3>
+                    <span style={{ fontSize: 10, fontWeight: 700, background: '#dcfce7', color: '#166534', padding: '3px 8px', borderRadius: 20 }}>
+                      VERIFIED ✓
+                    </span>
                   </div>
-                  <p style={{ fontSize: 14, color: '#6b7280', marginBottom: 20 }}>📍 {land.gps}</p>
-
-                  <div style={{ padding: '20px 0', borderTop: '1px solid #f9fafb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 4 }}>📍 {land.gps}</p>
+                  {land._distance !== undefined && (
+                    <p style={{ fontSize: 12, color: 'var(--accent)', marginBottom: 8, fontWeight: 600 }}>
+                      🗺️ {land._distance} km from searched location
+                    </p>
+                  )}
+                  <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>📐 {land.area.toLocaleString()} m²</p>
+                  <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 16 }}>👤 {shortAddr(land.owner)}</p>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                     <div>
-                      <span style={{ display: 'block', fontSize: 10, color: '#9ca3af', fontWeight: 800 }}>PRICE</span>
-                      <span style={{ fontSize: 24, fontWeight: 900, color: '#48a07c' }}>{land.price} ETH</span>
+                      <div style={{ fontSize: 10, color: 'var(--text2)', fontWeight: 700 }}>PRICE</div>
+                      <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--accent)' }}>{land.price} MATIC</div>
                     </div>
                     <button onClick={() => handleBuy(land)} disabled={loading === land.landId} style={{
-                      background: '#111', color: '#fff', border: 'none', padding: '12px 24px',
-                      borderRadius: 14, fontWeight: 800, fontSize: 12, cursor: 'pointer', transition: '0.2s'
+                      background: '#111', color: '#fff', border: 'none',
+                      padding: '11px 22px', borderRadius: 10, fontWeight: 700, fontSize: 13, cursor: 'pointer',
                     }}>
-                      {loading === land.landId ? 'BUYING...' : 'BUY NOW'}
+                      {loading === land.landId ? '⏳ Buying...' : 'BUY NOW'}
                     </button>
                   </div>
                 </div>
               </div>
             ))}
           </div>
+
+          {allListings.length === 0 && (
+            <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text2)' }}>
+              <div style={{ fontSize: 48, marginBottom: 16 }}>🏷️</div>
+              <div>No lands listed for sale. Be the first — switch to "List My Land".</div>
+            </div>
+          )}
         </>
       )}
 
-      {/* Tab Content: Sell */}
+      {/* ── SELL TAB ── */}
       {tab === 'sell' && (
         <div style={{
-          background: '#fff', border: '1px solid #f0f0f0', padding: 50, borderRadius: 32,
-          maxWidth: 550, margin: '0 auto', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)'
+          background: 'var(--white)', border: '1px solid var(--border)',
+          borderRadius: 16, padding: '40px 44px', maxWidth: 520, margin: '0 auto',
+          boxShadow: 'var(--shadow)',
         }}>
-          <h2 style={{ marginTop: 0, fontWeight: 900, fontSize: 28, letterSpacing: '-0.025em' }}>List Property</h2>
-          <p style={{ color: '#6b7280', fontSize: 15, marginBottom: 40 }}>Transfer ownership by listing your registered land parcel.</p>
-
+          <h2 style={{ marginTop: 0, fontWeight: 800, fontSize: 26, marginBottom: 8 }}>List Property for Sale</h2>
+          <p style={{ color: 'var(--text2)', fontSize: 14, marginBottom: 32 }}>
+            Enter your Land ID and asking price. Ownership transfers automatically on purchase.
+          </p>
           <form onSubmit={handleList}>
-            <div style={{ marginBottom: 24 }}>
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 900, color: '#9ca3af', marginBottom: 8, textTransform: 'uppercase' }}>Land ID</label>
-              <input
-                type="number"
-                placeholder="e.g. 1001"
-                value={listForm.landId}
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: 'var(--text2)', marginBottom: 8, textTransform: 'uppercase' }}>Land ID *</label>
+              <input type="number" placeholder="e.g. 1" value={listForm.landId}
                 onChange={e => setListForm({ ...listForm, landId: e.target.value })}
-                style={{ width: '100%', padding: '16px 20px', borderRadius: 16, border: '2px solid #f3f4f6', outline: 'none', fontSize: 16 }}
-              />
+                style={{ width: '100%', padding: '13px 16px', borderRadius: 10, border: '1.5px solid var(--border)', fontSize: 15, outline: 'none', boxSizing: 'border-box' }} />
             </div>
-            <div style={{ marginBottom: 35 }}>
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 900, color: '#9ca3af', marginBottom: 8, textTransform: 'uppercase' }}>Asking Price (ETH)</label>
-              <input
-                type="number"
-                step="0.01"
-                placeholder="e.g. 1.5"
-                value={listForm.price}
+            <div style={{ marginBottom: 28 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: 'var(--text2)', marginBottom: 8, textTransform: 'uppercase' }}>Asking Price (MATIC) *</label>
+              <input type="number" step="0.001" placeholder="e.g. 1.5" value={listForm.price}
                 onChange={e => setListForm({ ...listForm, price: e.target.value })}
-                style={{ width: '100%', padding: '16px 20px', borderRadius: 16, border: '2px solid #f3f4f6', outline: 'none', fontSize: 16 }}
-              />
+                style={{ width: '100%', padding: '13px 16px', borderRadius: 10, border: '1.5px solid var(--border)', fontSize: 15, outline: 'none', boxSizing: 'border-box' }} />
             </div>
-
-            <div style={{ background: '#fffbeb', border: '1px solid #fde68a', padding: '18px 24px', borderRadius: 18, fontSize: 13, color: '#92400e', marginBottom: 35, fontWeight: 600, lineHeight: 1.5 }}>
-              💡 Ownership will be automatically transferred to the buyer once the payment is confirmed on-chain.
+            <div style={{ background: '#fffbeb', border: '1px solid #fde68a', padding: '14px 18px', borderRadius: 10, fontSize: 13, color: '#92400e', marginBottom: 28, lineHeight: 1.5 }}>
+              💡 You must be the registered owner. The smart contract verifies ownership automatically.
             </div>
+            <button type="submit" disabled={loading === 'list'} style={{
+              width: '100%', padding: '15px', borderRadius: 12, border: 'none',
+              background: 'var(--accent)', color: '#fff', fontWeight: 800, fontSize: 15,
+              cursor: loading === 'list' ? 'not-allowed' : 'pointer', opacity: loading === 'list' ? 0.7 : 1,
+            }}>
+              {loading === 'list' ? '⏳ Publishing...' : '🏷️ Publish Listing'}
+            </button>
+          </form>
+        </div>
+      )}
 
-            <button
-              type="submit"
-              disabled={loading === 'list'}
-              style={{
-                width: '100%', padding: 22, borderRadius: 18, border: 'none',
-                background: '#48a07c', color: '#fff', fontWeight: 900, fontSize: 16,
-                cursor: 'pointer', opacity: loading === 'list' ? 0.7 : 1, transition: '0.2s',
-                letterSpacing: '0.05em'
-              }}
-            >
-              {loading === 'list' ? 'PUBLISHING...' : 'PUBLISH LISTING'}
+      {/* ── CANCEL TAB ── */}
+      {tab === 'cancel' && (
+        <div style={{
+          background: 'var(--white)', border: '1px solid var(--border)',
+          borderRadius: 16, padding: '40px 44px', maxWidth: 520, margin: '0 auto',
+          boxShadow: 'var(--shadow)',
+        }}>
+          <h2 style={{ marginTop: 0, fontWeight: 800, fontSize: 26, marginBottom: 8 }}>Cancel Sale Listing</h2>
+          <p style={{ color: 'var(--text2)', fontSize: 14, marginBottom: 32 }}>
+            Enter the Land ID of your listing you wish to cancel.
+          </p>
+          <form onSubmit={handleCancelSale}>
+            <div style={{ marginBottom: 28 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: 'var(--text2)', marginBottom: 8, textTransform: 'uppercase' }}>Land ID *</label>
+              <input type="number" placeholder="e.g. 1" value={cancelId}
+                onChange={e => setCancelId(e.target.value)}
+                style={{ width: '100%', padding: '13px 16px', borderRadius: 10, border: '1.5px solid var(--border)', fontSize: 15, outline: 'none', boxSizing: 'border-box' }} />
+            </div>
+            <button type="submit" disabled={loading === 'cancel'} style={{
+              width: '100%', padding: '15px', borderRadius: 12, border: 'none',
+              background: '#dc2626', color: '#fff', fontWeight: 800, fontSize: 15,
+              cursor: loading === 'cancel' ? 'not-allowed' : 'pointer', opacity: loading === 'cancel' ? 0.7 : 1,
+            }}>
+              {loading === 'cancel' ? '⏳ Cancelling...' : '❌ Cancel Listing'}
             </button>
           </form>
         </div>

@@ -13,13 +13,15 @@ contract LandRegistry is ReentrancyGuard {
         address owner;
         string  gpsCoordinates;
         uint256 areaSqMeters;
-        string  documentHash;      // IPFS hash of title deed
+        string  documentHash;
+        string  title;
         bool    isRegistered;
         bool    isForSale;
         uint256 salePrice;
         bool    hasLien;
         bool    isDisputed;
         uint256 registeredAt;
+        uint256 updatedAt;
     }
 
     struct OwnershipRecord {
@@ -27,76 +29,89 @@ contract LandRegistry is ReentrancyGuard {
         address newOwner;
         uint256 price;
         uint256 timestamp;
+        string  transferType;
     }
 
     struct Dispute {
         address filer;
-        string  evidenceHash;      // IPFS hash of evidence document
+        string  evidenceHash;
         uint256 filedAt;
         bool    resolved;
         string  resolution;
+    }
+
+    struct VerifyResult {
+        bool    isRegistered;
+        bool    hasCleanTitle;
+        bool    hasLien;
+        bool    isDisputed;
+        bool    isForSale;
+        address currentOwner;
+        uint256 registeredAt;
+        uint256 totalTransfers;
+        string  status;
     }
 
     // ════════════════════════════════════════════════════════
     // STATE VARIABLES
     // ════════════════════════════════════════════════════════
 
-    address public government;     // can register land + resolve disputes
-    address public bank;           // can add / remove liens
+    address public government;
+    address public bank;
+    uint256 public platformFeePercent = 2;
 
     mapping(uint256 => LandParcel)        public lands;
-    mapping(uint256 => OwnershipRecord[]) public history;
+    mapping(uint256 => OwnershipRecord[]) private _history;
     mapping(uint256 => address)           public lienHolder;
     mapping(uint256 => Dispute)           public disputes;
+    mapping(address => uint256[])         private _ownerLands;
+
+    uint256[] private _allLandIds;
+    uint256[] private _forSaleLandIds;
 
     // ════════════════════════════════════════════════════════
-    // EVENTS  — frontend listens to these for real-time updates
+    // EVENTS
     // ════════════════════════════════════════════════════════
 
-    event LandRegistered      (uint256 landId, address owner);
-    event OwnershipTransferred(uint256 landId, address from, address to);
-    event ListedForSale       (uint256 landId, uint256 price);
-    event SaleCancelled       (uint256 landId);
-    event LandBought          (uint256 landId, address buyer, uint256 price);
-    event LienAdded           (uint256 landId, address bank);
-    event LienRemoved         (uint256 landId);
-    event DisputeFiled        (uint256 landId, address filer);
-    event DisputeResolved     (uint256 landId, address rightfulOwner);
+    event LandRegistered      (uint256 indexed landId, address indexed owner);
+    event OwnershipTransferred(uint256 indexed landId, address indexed from, address indexed to, uint256 price);
+    event ListedForSale       (uint256 indexed landId, uint256 price);
+    event SaleCancelled       (uint256 indexed landId);
+    event LandBought          (uint256 indexed landId, address indexed buyer, uint256 price);
+    event LienAdded           (uint256 indexed landId, address indexed bankAddr);
+    event LienRemoved         (uint256 indexed landId);
+    event DisputeFiled        (uint256 indexed landId, address indexed claimant);
+    event DisputeResolved     (uint256 indexed landId, address indexed rightfulOwner);
 
     // ════════════════════════════════════════════════════════
-    // MODIFIERS  — security gates on functions
+    // MODIFIERS
     // ════════════════════════════════════════════════════════
 
-    // Only the government wallet can call this function
     modifier onlyGov() {
         require(msg.sender == government, "Only government can do this");
         _;
     }
 
-    // Only the bank wallet can call this function
     modifier onlyBank() {
         require(msg.sender == bank, "Only bank can do this");
         _;
     }
 
-    // Only the current owner of that land can call this function
     modifier onlyOwner(uint256 id) {
         require(msg.sender == lands[id].owner, "You are not the owner");
         _;
     }
 
-    // Land must already be registered — prevents acting on non-existent land
     modifier landExists(uint256 id) {
         require(lands[id].isRegistered, "Land not found");
         _;
     }
 
     // ════════════════════════════════════════════════════════
-    // CONSTRUCTOR  — runs once when contract is deployed
+    // CONSTRUCTOR
     // ════════════════════════════════════════════════════════
 
     constructor(address _gov, address _bank) {
-        // FROM YOUR FILE: validates both addresses on deploy
         require(_gov  != address(0), "Invalid government address");
         require(_bank != address(0), "Invalid bank address");
         government = _gov;
@@ -105,93 +120,144 @@ contract LandRegistry is ReentrancyGuard {
 
     // ════════════════════════════════════════════════════════
     // MODULE 1 — LAND REGISTRATION
-    // Only government can register a new land parcel
+    // Takes explicit landId (matches test: registerLand(1, owner, gps, area, hash))
     // ════════════════════════════════════════════════════════
 
     function registerLand(
-        uint256       landId,
+        uint256       _landId,
         address       _owner,
-        string memory gpsCoordinates,
-        uint256       areaSqMeters,
-        string memory documentHash
+        string memory _gps,
+        uint256       _area,
+        string memory _docHash
     ) public onlyGov {
-        require(!lands[landId].isRegistered,          "Land already registered");
-        require(_owner != address(0),                 "Invalid owner address");
-        require(areaSqMeters > 0,                     "Area must be greater than 0");
-        // FROM YOUR FILE: validates GPS is not empty
-        require(bytes(gpsCoordinates).length > 0,     "GPS coordinates required");
+        require(!lands[_landId].isRegistered,  "Land already registered");
+        require(_owner != address(0),          "Invalid owner address");
+        require(_area > 0,                     "Area must be greater than 0");
+        require(bytes(_gps).length > 0,        "GPS coordinates required");
 
-        lands[landId] = LandParcel({
-            landId:         landId,
+        lands[_landId] = LandParcel({
+            landId:         _landId,
             owner:          _owner,
-            gpsCoordinates: gpsCoordinates,
-            areaSqMeters:   areaSqMeters,
-            documentHash:   documentHash,
+            gpsCoordinates: _gps,
+            areaSqMeters:   _area,
+            documentHash:   _docHash,
+            title:          "",
             isRegistered:   true,
             isForSale:      false,
             salePrice:      0,
             hasLien:        false,
             isDisputed:     false,
-            registeredAt:   block.timestamp
+            registeredAt:   block.timestamp,
+            updatedAt:      block.timestamp
         });
 
-        // First history entry — from zero address = government registration
-        history[landId].push(OwnershipRecord({
+        _allLandIds.push(_landId);
+        _ownerLands[_owner].push(_landId);
+
+        _history[_landId].push(OwnershipRecord({
             previousOwner: address(0),
             newOwner:      _owner,
             price:         0,
-            timestamp:     block.timestamp
+            timestamp:     block.timestamp,
+            transferType:  "REGISTRATION"
         }));
 
-        emit LandRegistered(landId, _owner);
+        emit LandRegistered(_landId, _owner);
     }
 
-    // Returns full details of a land parcel
-    function getLandDetails(uint256 landId)
-        public view landExists(landId)
-        returns (LandParcel memory)
+    // Overload: accepts title as well (used by frontend Register.jsx)
+    function registerLandFull(
+        uint256       _landId,
+        address       _owner,
+        string memory _gps,
+        uint256       _area,
+        string memory _docHash,
+        string memory _title
+    ) public onlyGov {
+        require(!lands[_landId].isRegistered,  "Land already registered");
+        require(_owner != address(0),          "Invalid owner address");
+        require(_area > 0,                     "Area must be greater than 0");
+        require(bytes(_gps).length > 0,        "GPS coordinates required");
+        require(bytes(_title).length > 0,      "Title required");
+
+        lands[_landId] = LandParcel({
+            landId:         _landId,
+            owner:          _owner,
+            gpsCoordinates: _gps,
+            areaSqMeters:   _area,
+            documentHash:   _docHash,
+            title:          _title,
+            isRegistered:   true,
+            isForSale:      false,
+            salePrice:      0,
+            hasLien:        false,
+            isDisputed:     false,
+            registeredAt:   block.timestamp,
+            updatedAt:      block.timestamp
+        });
+
+        _allLandIds.push(_landId);
+        _ownerLands[_owner].push(_landId);
+
+        _history[_landId].push(OwnershipRecord({
+            previousOwner: address(0),
+            newOwner:      _owner,
+            price:         0,
+            timestamp:     block.timestamp,
+            transferType:  "REGISTRATION"
+        }));
+
+        emit LandRegistered(_landId, _owner);
+    }
+
+    function updateDocument(uint256 _id, string memory _newHash)
+        public onlyGov landExists(_id)
     {
-        return lands[landId];
+        lands[_id].documentHash = _newHash;
+        lands[_id].updatedAt    = block.timestamp;
     }
 
     // ════════════════════════════════════════════════════════
     // MODULE 2 — BUY / SELL
-    // Smart contract handles escrow — no middleman needed
     // ════════════════════════════════════════════════════════
 
-    // Owner lists their land for sale at a set price
-    function listForSale(uint256 landId, uint256 price)
-        public landExists(landId) onlyOwner(landId)
+    function listForSale(uint256 _id, uint256 _price)
+        public landExists(_id) onlyOwner(_id)
     {
-        require(!lands[landId].isDisputed, "Cannot list: land is disputed");
-        require(!lands[landId].hasLien,    "Cannot list: active mortgage exists");
-        require(!lands[landId].isForSale,  "Already listed for sale");
-        require(price > 0,                 "Price must be greater than 0");
+        require(!lands[_id].isDisputed, "Cannot list: land is disputed");
+        require(!lands[_id].hasLien,    "Cannot list: active mortgage exists");
+        require(!lands[_id].isForSale,  "Already listed for sale");
+        require(_price > 0,             "Price must be greater than 0");
 
-        lands[landId].isForSale = true;
-        lands[landId].salePrice = price;
+        lands[_id].isForSale = true;
+        lands[_id].salePrice = _price;
+        lands[_id].updatedAt = block.timestamp;
 
-        emit ListedForSale(landId, price);
+        _forSaleLandIds.push(_id);
+        emit ListedForSale(_id, _price);
     }
 
-    // FROM YOUR FILE: Owner can cancel their listing at any time
-    function cancelListing(uint256 landId)
-        public landExists(landId) onlyOwner(landId)
+    // cancelListing — name used in tests
+    function cancelListing(uint256 _id)
+        public landExists(_id) onlyOwner(_id)
     {
-        require(lands[landId].isForSale, "Land is not listed for sale");
+        require(lands[_id].isForSale, "Land is not listed for sale");
 
-        lands[landId].isForSale = false;
-        lands[landId].salePrice = 0;
+        lands[_id].isForSale = false;
+        lands[_id].salePrice = 0;
+        lands[_id].updatedAt = block.timestamp;
 
-        emit SaleCancelled(landId);
+        _removeFromForSale(_id);
+        emit SaleCancelled(_id);
     }
 
-    // Buyer purchases land — instant atomic ownership transfer
-    // nonReentrant protects against reentrancy hack attacks
-    function buyLand(uint256 landId)
-        public payable nonReentrant landExists(landId)
+    // cancelSale alias for frontend compatibility
+    function cancelSale(uint256 _id) public { cancelListing(_id); }
+
+    function buyLand(uint256 _id)
+        public payable nonReentrant landExists(_id)
     {
-        LandParcel storage land = lands[landId];
+        LandParcel storage land = lands[_id];
 
         require(land.isForSale,              "Land is not for sale");
         require(msg.value >= land.salePrice, "Payment is not enough");
@@ -199,175 +265,238 @@ contract LandRegistry is ReentrancyGuard {
         require(!land.isDisputed,            "Land is under active dispute");
 
         address previousOwner = land.owner;
+        uint256 salePrice     = land.salePrice;
 
-        // Record history BEFORE changing owner
-        history[landId].push(OwnershipRecord({
+        _history[_id].push(OwnershipRecord({
             previousOwner: previousOwner,
             newOwner:      msg.sender,
             price:         msg.value,
-            timestamp:     block.timestamp
+            timestamp:     block.timestamp,
+            transferType:  "SALE"
         }));
 
-        // Transfer ownership on-chain
+        _removeFromOwner(previousOwner, _id);
+        _ownerLands[msg.sender].push(_id);
+
         land.owner     = msg.sender;
         land.isForSale = false;
         land.salePrice = 0;
+        land.updatedAt = block.timestamp;
 
-        // Release payment to seller — automatic, no bank needed
-        payable(previousOwner).transfer(msg.value);
+        _removeFromForSale(_id);
 
-        emit LandBought(landId, msg.sender, msg.value);
-        emit OwnershipTransferred(landId, previousOwner, msg.sender);
-    }
+        payable(previousOwner).transfer(salePrice);
 
-    // ════════════════════════════════════════════════════════
-    // MODULE 3 — OWNERSHIP HISTORY
-    // Every transfer ever recorded — immutable and tamper-proof
-    // ════════════════════════════════════════════════════════
-
-    function getLandHistory(uint256 landId)
-        public view landExists(landId)
-        returns (OwnershipRecord[] memory)
-    {
-        return history[landId];
-    }
-
-    // ════════════════════════════════════════════════════════
-    // MODULE 4 — VERIFICATION
-    // Banks and lawyers call this for instant title check
-    // ════════════════════════════════════════════════════════
-
-    function verifyLand(uint256 landId)
-        public view
-        returns (
-            bool    isRegistered,
-            bool    hasCleanTitle,
-            address currentOwner,
-            uint256 totalTransfers,
-            string memory status
-        )
-    {
-        // If land does not exist at all
-        if (!lands[landId].isRegistered) {
-            return (false, false, address(0), 0, "NOT REGISTERED");
+        if (msg.value > salePrice) {
+            payable(msg.sender).transfer(msg.value - salePrice);
         }
 
-        LandParcel memory land = lands[landId];
-
-        // Clean title = no mortgage AND no dispute
-        bool clean = !land.hasLien && !land.isDisputed;
-
-        string memory statusMsg;
-        if      (land.isDisputed) statusMsg = "DISPUTED - DO NOT TRANSACT";
-        else if (land.hasLien)    statusMsg = "ENCUMBERED - MORTGAGE ACTIVE";
-        else if (land.isForSale)  statusMsg = "REGISTERED - CLEAN TITLE - FOR SALE";
-        else                      statusMsg = "REGISTERED - CLEAN TITLE";
-
-        return (
-            true,
-            clean,
-            land.owner,
-            history[landId].length,
-            statusMsg
-        );
+        emit LandBought(_id, msg.sender, salePrice);
+        emit OwnershipTransferred(_id, previousOwner, msg.sender, salePrice);
     }
 
     // ════════════════════════════════════════════════════════
-    // MODULE 5 — MORTGAGE / LIEN
-    // Bank records and removes mortgages on-chain
+    // MODULE 3 — READ / HISTORY
     // ════════════════════════════════════════════════════════
 
-    // Bank adds a mortgage — land is frozen from sale
-    function addLien(uint256 landId)
-        public onlyBank landExists(landId)
+    function getLandHistory(uint256 _id)
+        public view landExists(_id)
+        returns (OwnershipRecord[] memory)
     {
-        require(!lands[landId].hasLien,    "Lien already active on this land");
-        require(!lands[landId].isDisputed, "Cannot add lien: land is disputed");
-
-        lands[landId].hasLien   = true;
-        lands[landId].isForSale = false;   // Freeze immediately
-        lienHolder[landId]      = msg.sender;
-
-        emit LienAdded(landId, msg.sender);
+        return _history[_id];
     }
 
-    // Bank removes mortgage when loan is fully repaid
-    function removeLien(uint256 landId)
-        public onlyBank landExists(landId)
+    function getLandsByOwner(address _owner)
+        public view returns (uint256[] memory)
     {
-        require(lands[landId].hasLien,            "No active lien on this land");
-        require(lienHolder[landId] == msg.sender, "Only the lien holder can remove it");
+        return _ownerLands[_owner];
+    }
 
-        lands[landId].hasLien = false;
-        delete lienHolder[landId];
+    function getAllLands() public view returns (uint256[] memory) {
+        return _allLandIds;
+    }
 
-        emit LienRemoved(landId);
+    function getTotalLands() public view returns (uint256) {
+        return _allLandIds.length;
+    }
+
+    function getForSaleLands() public view returns (uint256[] memory) {
+        uint256 count = 0;
+        for (uint256 i = 0; i < _forSaleLandIds.length; i++) {
+            if (lands[_forSaleLandIds[i]].isForSale) count++;
+        }
+        uint256[] memory result = new uint256[](count);
+        uint256 j = 0;
+        for (uint256 i = 0; i < _forSaleLandIds.length; i++) {
+            if (lands[_forSaleLandIds[i]].isForSale) {
+                result[j++] = _forSaleLandIds[i];
+            }
+        }
+        return result;
+    }
+
+    // ════════════════════════════════════════════════════════
+    // MODULE 4 — VERIFY
+    // Returns rich struct matching tests (verifyLand(id).status etc.)
+    // ════════════════════════════════════════════════════════
+
+    function getLandDetails(uint256 _id)
+        public view landExists(_id)
+        returns (LandParcel memory)
+    {
+        return lands[_id];
+    }
+
+    function verifyLand(uint256 _id)
+        public view
+        returns (VerifyResult memory result)
+    {
+        if (!lands[_id].isRegistered) {
+            result.isRegistered = false;
+            result.status = "NOT REGISTERED";
+            return result;
+        }
+
+        LandParcel memory land = lands[_id];
+        result.isRegistered  = true;
+        result.hasLien       = land.hasLien;
+        result.isDisputed    = land.isDisputed;
+        result.isForSale     = land.isForSale;
+        result.currentOwner  = land.owner;
+        result.registeredAt  = land.registeredAt;
+        result.totalTransfers = uint256(_history[_id].length);
+        result.hasCleanTitle = !land.hasLien && !land.isDisputed;
+
+        if (land.isDisputed) {
+            result.status = "DISPUTED - DO NOT TRANSACT";
+        } else if (land.hasLien) {
+            result.status = "ENCUMBERED - MORTGAGE ACTIVE";
+        } else if (land.isForSale) {
+            result.status = "REGISTERED - CLEAN TITLE - FOR SALE";
+        } else {
+            result.status = "REGISTERED - CLEAN TITLE";
+        }
+    }
+
+    // ════════════════════════════════════════════════════════
+    // MODULE 5 — LIEN
+    // addLien(id) — bank address inferred from msg.sender
+    // ════════════════════════════════════════════════════════
+
+    function addLien(uint256 _id)
+        public onlyBank landExists(_id)
+    {
+        require(!lands[_id].hasLien,    "Lien already active on this land");
+        require(!lands[_id].isDisputed, "Cannot add lien: land is disputed");
+
+        lands[_id].hasLien   = true;
+        lands[_id].isForSale = false;
+        lands[_id].updatedAt = block.timestamp;
+        lienHolder[_id]      = msg.sender;
+
+        _removeFromForSale(_id);
+        emit LienAdded(_id, msg.sender);
+    }
+
+    function removeLien(uint256 _id)
+        public onlyBank landExists(_id)
+    {
+        require(lands[_id].hasLien, "No active lien on this land");
+
+        lands[_id].hasLien   = false;
+        lands[_id].updatedAt = block.timestamp;
+        delete lienHolder[_id];
+
+        emit LienRemoved(_id);
     }
 
     // ════════════════════════════════════════════════════════
     // MODULE 6 — DISPUTE RESOLUTION
-    // Anyone files, government resolves — all on-chain
     // ════════════════════════════════════════════════════════
 
-    // Anyone can file a dispute against a land parcel
-    function fileDispute(uint256 landId, string memory evidenceHash)
-        public landExists(landId)
+    function fileDispute(uint256 _id, string memory _evidenceHash)
+        public landExists(_id)
     {
-        require(!lands[landId].isDisputed, "Dispute already active on this land");
+        require(!lands[_id].isDisputed, "Dispute already active on this land");
 
-        // Freeze land immediately — no transfers during dispute
-        lands[landId].isDisputed = true;
-        lands[landId].isForSale  = false;
+        lands[_id].isDisputed = true;
+        lands[_id].isForSale  = false;
+        lands[_id].updatedAt  = block.timestamp;
 
-        disputes[landId] = Dispute({
+        disputes[_id] = Dispute({
             filer:        msg.sender,
-            evidenceHash: evidenceHash,
+            evidenceHash: _evidenceHash,
             filedAt:      block.timestamp,
             resolved:     false,
             resolution:   ""
         });
 
-        emit DisputeFiled(landId, msg.sender);
+        _removeFromForSale(_id);
+        emit DisputeFiled(_id, msg.sender);
     }
 
-    // Only government can resolve — final decision written on-chain forever
     function resolveDispute(
-        uint256       landId,
-        address       rightfulOwner,
-        string memory resolutionNotes
-    ) public onlyGov landExists(landId) {
-        require(lands[landId].isDisputed,    "No active dispute on this land");
-        require(rightfulOwner != address(0), "Invalid rightful owner address");
+        uint256       _id,
+        address       _rightfulOwner,
+        string memory _resolution
+    ) public onlyGov landExists(_id) {
+        require(lands[_id].isDisputed,        "No active dispute on this land");
+        require(_rightfulOwner != address(0), "Invalid rightful owner address");
 
-        // If owner needs to change, transfer ownership
-        if (rightfulOwner != lands[landId].owner) {
-            address previousOwner = lands[landId].owner;
+        if (_rightfulOwner != lands[_id].owner) {
+            address prev = lands[_id].owner;
+            _removeFromOwner(prev, _id);
+            _ownerLands[_rightfulOwner].push(_id);
 
-            history[landId].push(OwnershipRecord({
-                previousOwner: previousOwner,
-                newOwner:      rightfulOwner,
+            _history[_id].push(OwnershipRecord({
+                previousOwner: prev,
+                newOwner:      _rightfulOwner,
                 price:         0,
-                timestamp:     block.timestamp
+                timestamp:     block.timestamp,
+                transferType:  "DISPUTE_RESOLUTION"
             }));
 
-            lands[landId].owner = rightfulOwner;
-            emit OwnershipTransferred(landId, previousOwner, rightfulOwner);
+            lands[_id].owner = _rightfulOwner;
+            emit OwnershipTransferred(_id, prev, _rightfulOwner, 0);
         }
 
-        // Close the dispute permanently
-        lands[landId].isDisputed    = false;
-        disputes[landId].resolved   = true;
-        disputes[landId].resolution = resolutionNotes;
+        lands[_id].isDisputed      = false;
+        lands[_id].updatedAt       = block.timestamp;
+        disputes[_id].resolved     = true;
+        disputes[_id].resolution   = _resolution;
 
-        emit DisputeResolved(landId, rightfulOwner);
+        emit DisputeResolved(_id, _rightfulOwner);
     }
 
-    // Get full dispute record for any land
-    function getDispute(uint256 landId)
-        public view landExists(landId)
+    function getDispute(uint256 _id)
+        public view landExists(_id)
         returns (Dispute memory)
     {
-        return disputes[landId];
+        return disputes[_id];
     }
 
+    // ════════════════════════════════════════════════════════
+    // INTERNAL HELPERS
+    // ════════════════════════════════════════════════════════
+
+    function _removeFromForSale(uint256 _id) internal {
+        for (uint256 i = 0; i < _forSaleLandIds.length; i++) {
+            if (_forSaleLandIds[i] == _id) {
+                _forSaleLandIds[i] = _forSaleLandIds[_forSaleLandIds.length - 1];
+                _forSaleLandIds.pop();
+                break;
+            }
+        }
+    }
+
+    function _removeFromOwner(address _owner, uint256 _id) internal {
+        uint256[] storage arr = _ownerLands[_owner];
+        for (uint256 i = 0; i < arr.length; i++) {
+            if (arr[i] == _id) {
+                arr[i] = arr[arr.length - 1];
+                arr.pop();
+                break;
+            }
+        }
+    }
 }

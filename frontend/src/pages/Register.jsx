@@ -1,106 +1,176 @@
 // pages/Register.jsx
 import { useState } from 'react';
-import { getContract } from '../utils/contract';
+import { getContract, getReadContract } from '../utils/contract';
 import { uploadToIPFS } from '../utils/ipfs';
-import { analyzeLandDocument } from '../utils/ibmApi';
+
+// ─── Auto-extract GPS & area from plain text (title deed) ───────────────────
+const extractFromText = (text) => {
+  const extracted = {};
+
+  const gpsMatch = text.match(
+    /(-?\d{1,3}\.\d{2,})\s*[,°NS]\s*(-?\d{1,3}\.\d{2,})/i
+  );
+  if (gpsMatch) extracted.gps = `${gpsMatch[1]}, ${gpsMatch[2]}`;
+
+  const areaMatch = text.match(/(\d[\d,.]*)\s*(sq\.?\s*m(?:eters?)?|hectares?|bigha)/i);
+  if (areaMatch) {
+    let area = parseFloat(areaMatch[1].replace(',', ''));
+    if (/hectare/i.test(areaMatch[2])) area = Math.round(area * 10000);
+    if (/bigha/i.test(areaMatch[2]))   area = Math.round(area * 2529);
+    extracted.area = String(Math.round(area));
+  }
+
+  const titleMatch = text.match(/(plot\s[\w\s-]+|survey\s+no\.?\s+\w+|khasra\s+no\.?\s+\w+)/i);
+  if (titleMatch) extracted.title = titleMatch[0].trim();
+
+  return extracted;
+};
 
 const Field = ({ label, hint, children }) => (
   <div style={{ marginBottom: 20 }}>
     <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6, color: 'var(--text)' }}>
       {label}
     </label>
-    {hint && <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8 }}>{hint}</p>}
+    {hint && <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8, margin: '0 0 8px' }}>{hint}</p>}
     {children}
   </div>
 );
 
-const input = {
-  width: '100%', padding: '10px 14px',
+const inputStyle = {
+  width: '100%', padding: '10px 14px', boxSizing: 'border-box',
   border: '1px solid var(--border)', borderRadius: 8,
-  fontSize: 14, background: 'var(--white)',
-  outline: 'none', transition: 'border 0.15s',
+  fontSize: 14, background: 'var(--white)', outline: 'none',
 };
 
 export default function Register() {
-  const [form, setForm] = useState({
-    landId: '', ownerAddress: '', gps: '', area: '', docHash: '',
-  });
-  const [file, setFile]         = useState(null);
-  const [status, setStatus]     = useState('');
-  const [loading, setLoading]   = useState(false);
-  const [success, setSuccess]   = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
+  const [form, setForm] = useState({ landId: '', ownerAddress: '', gps: '', area: '', title: '', docHash: '' });
+  const [file, setFile] = useState(null);
+  const [status, setStatus] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(null);
+  const [autoFilled, setAutoFilled] = useState([]);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  // IBM Watson auto-fill
-  const handleFileUpload = async (e) => {
+  // Auto-suggest next Land ID from chain
+  const fetchNextId = async () => {
+    try {
+      const contract = getReadContract();
+      const total = await contract.getTotalLands();
+      set('landId', String(Number(total) + 1));
+    } catch {
+      // silently ignore — user can type manually
+    }
+  };
+
+  const handleFileChange = async (e) => {
     const f = e.target.files[0];
     if (!f) return;
     setFile(f);
-    setAnalyzing(true);
-    setStatus('🤖 IBM Watson is analyzing your document...');
-    try {
-      const text = await f.text();
-      const result = await analyzeLandDocument(text);
-      if (result.ownerName) set('ownerAddress', result.ownerName);
-      if (result.location)  set('gps', result.location);
-      setStatus('✅ Watson extracted data — please review and correct the fields below.');
-    } catch {
-      setStatus('Document uploaded. Fill in fields manually.');
+    setAutoFilled([]);
+    setStatus(`📄 File selected: ${f.name} — attempting to auto-extract details...`);
+
+    if (f.type === 'text/plain' || f.name.endsWith('.txt')) {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const text = ev.target.result;
+        const extracted = extractFromText(text);
+        const filled = [];
+        if (extracted.gps   && !form.gps)   { set('gps',   extracted.gps);   filled.push('GPS'); }
+        if (extracted.area  && !form.area)   { set('area',  extracted.area);  filled.push('Area'); }
+        if (extracted.title && !form.title)  { set('title', extracted.title); filled.push('Title'); }
+        if (filled.length > 0) {
+          setAutoFilled(filled);
+          setStatus(`✨ Auto-filled: ${filled.join(', ')} from document. Please verify before submitting.`);
+        } else {
+          setStatus('📄 File loaded. No auto-fill patterns found — please fill in manually.');
+        }
+      };
+      reader.readAsText(f);
+    } else {
+      setStatus(`📄 ${f.name} will be uploaded to IPFS. Fill in the form manually.`);
     }
-    setAnalyzing(false);
   };
 
   const handleSubmit = async () => {
-    if (!form.landId || !form.ownerAddress || !form.gps || !form.area) {
-      setStatus('❌ Please fill in all required fields.'); return;
+    if (!form.landId || !form.ownerAddress || !form.gps || !form.area || !form.title) {
+      setStatus('❌ Please fill in all required fields (including Land ID).'); return;
+    }
+    if (isNaN(parseInt(form.landId)) || parseInt(form.landId) < 1) {
+      setStatus('❌ Land ID must be a positive integer.'); return;
+    }
+    if (!form.ownerAddress.startsWith('0x') || form.ownerAddress.length !== 42) {
+      setStatus('❌ Owner address must be a valid 0x wallet address.'); return;
     }
     setLoading(true);
-    setStatus('📁 Uploading document to IPFS...');
     try {
-      let docHash = form.docHash;
+      let docHash = form.docHash || 'no-document';
       if (file) {
+        setStatus('📁 Uploading document to IPFS via Pinata...');
         docHash = await uploadToIPFS(file);
         set('docHash', docHash);
+        setStatus('✅ Document uploaded! Sending to blockchain...');
+      } else {
+        setStatus('⛓️ Sending transaction to blockchain...');
       }
-      setStatus('⛓️ Sending transaction to blockchain...');
+
       const contract = await getContract();
-      const tx = await contract.registerLand(
-        form.landId, form.ownerAddress, form.gps,
-        parseInt(form.area), docHash || 'no-document'
+
+      // Use registerLandFull (6 params including title)
+      const tx = await contract.registerLandFull(
+        parseInt(form.landId),
+        form.ownerAddress,
+        form.gps,
+        parseInt(form.area),
+        docHash,
+        form.title
       );
-      setStatus('⏳ Waiting for confirmation...');
+
+      setStatus('⏳ Waiting for block confirmation...');
       await tx.wait();
-      setSuccess(true);
+
+      setSuccess({ ...form, docHash, landId: parseInt(form.landId) });
       setStatus('');
     } catch (err) {
-      setStatus('❌ Error: ' + (err.reason || err.message));
+      setStatus('❌ ' + (err.reason || err.message));
     }
     setLoading(false);
   };
 
+  const reset = () => {
+    setSuccess(null);
+    setForm({ landId: '', ownerAddress: '', gps: '', area: '', title: '', docHash: '' });
+    setFile(null);
+    setStatus('');
+    setAutoFilled([]);
+  };
+
   if (success) return (
     <div style={{ maxWidth: 560, margin: '80px auto', padding: '0 24px', textAlign: 'center' }}>
-      <div style={{ fontSize: 64, marginBottom: 20 }}>🎉</div>
+      <div style={{ fontSize: 64, marginBottom: 16 }}>🎉</div>
       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 28, marginBottom: 12 }}>Land Registered!</h2>
-      <p style={{ color: 'var(--text2)', marginBottom: 28 }}>
-        Land #{form.landId} has been permanently recorded on the Polygon blockchain.
-      </p>
+      <p style={{ color: 'var(--text2)', marginBottom: 24 }}>Permanently recorded on the blockchain.</p>
       <div style={{
         background: 'var(--accent-bg)', border: '1px solid var(--accent)',
-        borderRadius: 'var(--radius)', padding: '16px 20px', marginBottom: 28,
-        textAlign: 'left', fontSize: 13,
+        borderRadius: 12, padding: '20px 24px', marginBottom: 28, textAlign: 'left', fontSize: 13,
       }}>
-        <div style={{ fontWeight: 600, marginBottom: 8, color: 'var(--accent)' }}>REGISTRATION SUMMARY</div>
-        <div>Land ID: <strong>#{form.landId}</strong></div>
-        <div>Owner: <strong>{form.ownerAddress}</strong></div>
-        <div>Area: <strong>{form.area} sq. meters</strong></div>
-        <div>GPS: <strong>{form.gps}</strong></div>
-        {form.docHash && <div style={{ marginTop: 8, wordBreak: 'break-all' }}>IPFS: <strong>{form.docHash}</strong></div>}
+        <div style={{ fontWeight: 700, marginBottom: 10, color: 'var(--accent)', fontSize: 12, letterSpacing: 1 }}>REGISTRATION SUMMARY</div>
+        <div style={{ marginBottom: 6 }}>Land ID: <strong>#{success.landId}</strong></div>
+        <div style={{ marginBottom: 6 }}>Title: <strong>{success.title}</strong></div>
+        <div style={{ marginBottom: 6 }}>Owner: <strong style={{ wordBreak: 'break-all', fontSize: 12 }}>{success.ownerAddress}</strong></div>
+        <div style={{ marginBottom: 6 }}>Area: <strong>{success.area} sq. meters</strong></div>
+        <div style={{ marginBottom: 6 }}>GPS: <strong>{success.gps}</strong></div>
+        {success.docHash !== 'no-document' && (
+          <div style={{ marginTop: 8, wordBreak: 'break-all', fontSize: 12 }}>IPFS: <strong>{success.docHash}</strong></div>
+        )}
       </div>
-      <button onClick={() => { setSuccess(false); setForm({ landId:'', ownerAddress:'', gps:'', area:'', docHash:'' }); setFile(null); }}
-        style={{ background: 'var(--accent)', color: '#fff', border: 'none', padding: '12px 28px', borderRadius: 8, fontSize: 14, fontWeight: 600 }}>
+      <div style={{ background: '#f0faf5', border: '1px solid #059669', borderRadius: 10, padding: '12px 18px', fontSize: 13, color: '#166534', marginBottom: 20 }}>
+        📜 Go to <strong>Ownership History</strong> (Land ID #{success.landId}) to see this registration on-chain.
+      </div>
+      <button onClick={reset} style={{
+        background: 'var(--accent)', color: '#fff', border: 'none',
+        padding: '12px 28px', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer',
+      }}>
         Register Another Land
       </button>
     </div>
@@ -108,78 +178,92 @@ export default function Register() {
 
   return (
     <div style={{ maxWidth: 680, margin: '0 auto', padding: '48px 24px' }}>
-      <div className="fade-up">
-        <div style={{ marginBottom: 32 }}>
-          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 32, marginBottom: 8 }}>
-            📋 Register Land
-          </h1>
-          <p style={{ color: 'var(--text2)' }}>
-            Government authority only. Registers a new land parcel permanently on blockchain.
-          </p>
-        </div>
+      <div style={{ marginBottom: 32 }}>
+        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 32, marginBottom: 8 }}>📋 Register Land</h1>
+        <p style={{ color: 'var(--text2)' }}>Government authority only. Registers a new land parcel permanently on blockchain.</p>
+      </div>
 
-        {/* IBM Watson upload */}
-        <div style={{
-          background: 'var(--blue-bg)', border: '1px solid #C5D8F0',
-          borderRadius: 'var(--radius)', padding: '20px 24px', marginBottom: 28,
-        }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--blue)', marginBottom: 8, letterSpacing: 1 }}>
-            🤖 IBM WATSON AUTO-FILL
+      {/* Upload title deed */}
+      <div style={{
+        background: '#f0f7ff', border: '1px solid #c5d8f0',
+        borderRadius: 10, padding: '20px 24px', marginBottom: 28,
+      }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: '#1a4a7a', marginBottom: 6, letterSpacing: 1 }}>
+          📁 UPLOAD TITLE DEED (OPTIONAL)
+        </div>
+        <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 14, margin: '0 0 14px' }}>
+          Upload a .txt, PDF or image of the title deed. Stored on IPFS. Text files (.txt) will be
+          parsed automatically to pre-fill GPS, area, and title.
+        </p>
+        <input type="file" accept=".txt,.pdf,.png,.jpg,.jpeg" onChange={handleFileChange}
+          style={{ fontSize: 13 }} />
+
+        {autoFilled.length > 0 && (
+          <div style={{ marginTop: 12, background: '#f0fdf4', border: '1px solid #22c55e', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#166534' }}>
+            ✨ <strong>Auto-filled:</strong> {autoFilled.join(', ')} — extracted from your document. Please verify the values below.
           </div>
-          <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 14 }}>
-            Upload a title deed document and Watson NLU will automatically extract owner name, GPS, and land details.
-          </p>
-          <input type="file" accept=".txt,.pdf" onChange={handleFileUpload}
-            style={{ fontSize: 13, color: 'var(--text2)' }} />
-          {analyzing && <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
-            <span className="spinner" /> Analyzing with IBM Watson...
-          </div>}
-        </div>
+        )}
+      </div>
 
-        {/* Form fields */}
-        <div style={{
-          background: 'var(--white)', border: '1px solid var(--border)',
-          borderRadius: 'var(--radius)', padding: '28px 28px', boxShadow: 'var(--shadow)',
-        }}>
-          <Field label="Land ID *" hint="Unique numeric ID for this parcel (e.g. 1001)">
-            <input style={input} type="number" placeholder="e.g. 1001"
+      {/* Form */}
+      <div style={{
+        background: 'var(--white)', border: '1px solid var(--border)',
+        borderRadius: 12, padding: '28px', boxShadow: 'var(--shadow)',
+      }}>
+        <Field label="Land ID *" hint="Unique numeric ID for this parcel. Must not already exist on-chain.">
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input style={{ ...inputStyle, flex: 1 }} type="number" min="1" placeholder="e.g. 1"
               value={form.landId} onChange={e => set('landId', e.target.value)} />
-          </Field>
-          <Field label="Owner Wallet Address *" hint="The Ethereum/Polygon wallet address of the land owner">
-            <input style={input} type="text" placeholder="0x..."
-              value={form.ownerAddress} onChange={e => set('ownerAddress', e.target.value)} />
-          </Field>
-          <Field label="GPS Coordinates *" hint="e.g. 28.6139° N, 77.2090° E">
-            <input style={input} type="text" placeholder="28.6139° N, 77.2090° E"
-              value={form.gps} onChange={e => set('gps', e.target.value)} />
-          </Field>
-          <Field label="Area (sq. meters) *">
-            <input style={input} type="number" placeholder="e.g. 500"
-              value={form.area} onChange={e => set('area', e.target.value)} />
-          </Field>
-          <Field label="Document Hash (IPFS)" hint="Auto-filled after document upload. Or paste manually.">
-            <input style={input} type="text" placeholder="Qm..."
-              value={form.docHash} onChange={e => set('docHash', e.target.value)} />
-          </Field>
+            <button type="button" onClick={fetchNextId} style={{
+              padding: '10px 14px', borderRadius: 8, border: '1px solid var(--border)',
+              background: '#f8fafc', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap',
+            }}>
+              Auto-suggest →
+            </button>
+          </div>
+        </Field>
 
-          {status && (
-            <div style={{
-              background: status.startsWith('❌') ? 'var(--red-bg)' : 'var(--accent-bg)',
-              border: `1px solid ${status.startsWith('❌') ? '#F1948A' : 'var(--accent)'}`,
-              borderRadius: 8, padding: '12px 16px', marginBottom: 20,
-              fontSize: 13, color: status.startsWith('❌') ? 'var(--red)' : 'var(--accent)',
-            }}>{status}</div>
-          )}
+        <Field label="Land Title *" hint="Short name for this parcel (e.g. 'Plot A - Delhi North')">
+          <input style={inputStyle} type="text" placeholder="e.g. Plot A - Delhi North"
+            value={form.title} onChange={e => set('title', e.target.value)} />
+        </Field>
 
-          <button onClick={handleSubmit} disabled={loading} style={{
-            width: '100%', background: 'var(--accent)', color: '#fff',
-            border: 'none', padding: '14px', borderRadius: 10,
-            fontSize: 15, fontWeight: 600, opacity: loading ? 0.7 : 1,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-          }}>
-            {loading ? <><span className="spinner" style={{ borderTopColor: '#fff', borderColor: '#ffffff55' }} /> Processing...</> : '⛓️ Register on Blockchain'}
-          </button>
-        </div>
+        <Field label="Owner Wallet Address *" hint="Ethereum/Polygon address of the land owner (must start with 0x)">
+          <input style={inputStyle} type="text" placeholder="0x..."
+            value={form.ownerAddress} onChange={e => set('ownerAddress', e.target.value)} />
+        </Field>
+
+        <Field label="GPS Coordinates *" hint="e.g. 26.9124, 75.7873 — used for location search in Marketplace">
+          <input style={inputStyle} type="text" placeholder="26.9124, 75.7873"
+            value={form.gps} onChange={e => set('gps', e.target.value)} />
+        </Field>
+
+        <Field label="Area (sq. meters) *">
+          <input style={inputStyle} type="number" placeholder="e.g. 500"
+            value={form.area} onChange={e => set('area', e.target.value)} />
+        </Field>
+
+        <Field label="Document Hash (IPFS)" hint="Auto-filled after file upload above, or paste an existing IPFS hash manually.">
+          <input style={inputStyle} type="text" placeholder="Qm... (auto-filled on upload)"
+            value={form.docHash} onChange={e => set('docHash', e.target.value)} />
+        </Field>
+
+        {status && (
+          <div style={{
+            background: status.startsWith('❌') ? '#fff0f0' : status.startsWith('✨') ? '#f0fdf4' : '#f0faf5',
+            border: `1px solid ${status.startsWith('❌') ? '#ffaaaa' : status.startsWith('✨') ? '#22c55e' : 'var(--accent)'}`,
+            borderRadius: 8, padding: '12px 16px', marginBottom: 20, fontSize: 13,
+            color: status.startsWith('❌') ? '#c0392b' : status.startsWith('✨') ? '#166534' : 'var(--accent)',
+          }}>{status}</div>
+        )}
+
+        <button onClick={handleSubmit} disabled={loading} style={{
+          width: '100%', background: 'var(--accent)', color: '#fff',
+          border: 'none', padding: '14px', borderRadius: 10,
+          fontSize: 15, fontWeight: 600, opacity: loading ? 0.7 : 1, cursor: 'pointer',
+        }}>
+          {loading ? '⏳ Processing...' : '⛓️ Register on Blockchain'}
+        </button>
       </div>
     </div>
   );

@@ -1,0 +1,9 @@
+land id = 103
+
+area = Plot A - Delhi North
+
+Owner Wallet Address - 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
+
+GPS Coordinates - 26.9124, 75.7873 
+
+Area (sq. meters) - 450

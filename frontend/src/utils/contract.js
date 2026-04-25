@@ -1,783 +1,184 @@
-// utils/contract.js
-// This file connects your React frontend to the deployed smart contract.
-// After you deploy LandRegistry.sol, paste the address in CONTRACT_ADDRESS.
+import { ethers } from "ethers";
 
-import { ethers } from 'ethers';
+// ─────────────────────────────────────────────────────────────────────────────
+// ENS ROOT FIX — staticNetwork prevents any resolveName() / ENS lookup
+// ─────────────────────────────────────────────────────────────────────────────
+const CHAIN_ID = parseInt(process.env.REACT_APP_CHAIN_ID || "31337");
+const STATIC_NETWORK = new ethers.Network("land-registry", CHAIN_ID);
 
-// ── PASTE YOUR DEPLOYED CONTRACT ADDRESS HERE AFTER RUNNING deploy.js ──
-export const CONTRACT_ADDRESS = '0x5FbDB2315678afecb367f032d93F642f64180aa3';
+// ─────────────────────────────────────────────────────────────────────────────
+// ABI — matches the rewritten LandRegistry.sol exactly
+// ─────────────────────────────────────────────────────────────────────────────
+const CONTRACT_ABI = [
+  // ── Module 1: Registration ──────────────────────────────────────────────
+  // 5-param version (tests): registerLand(id, owner, gps, area, docHash)
+  "function registerLand(uint256 _landId, address _owner, string _gps, uint256 _area, string _docHash)",
+  // 6-param version (frontend Register.jsx): adds title
+  "function registerLandFull(uint256 _landId, address _owner, string _gps, uint256 _area, string _docHash, string _title)",
+  "function updateDocument(uint256 _id, string _newHash)",
 
-// ── PASTE YOUR CONTRACT ABI HERE AFTER RUNNING: npx hardhat compile ──
-// The ABI is in: artifacts/contracts/LandRegistry.sol/LandRegistry.json
-export const CONTRACT_ABI = [
- 
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			}
-		],
-		"name": "addLien",
-		"outputs": [],
-		"stateMutability": "nonpayable",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			}
-		],
-		"name": "buyLand",
-		"outputs": [],
-		"stateMutability": "payable",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			}
-		],
-		"name": "cancelListing",
-		"outputs": [],
-		"stateMutability": "nonpayable",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			},
-			{
-				"internalType": "string",
-				"name": "evidenceHash",
-				"type": "string"
-			}
-		],
-		"name": "fileDispute",
-		"outputs": [],
-		"stateMutability": "nonpayable",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "address",
-				"name": "_gov",
-				"type": "address"
-			},
-			{
-				"internalType": "address",
-				"name": "_bank",
-				"type": "address"
-			}
-		],
-		"stateMutability": "nonpayable",
-		"type": "constructor"
-	},
-	{
-		"anonymous": false,
-		"inputs": [
-			{
-				"indexed": false,
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			},
-			{
-				"indexed": false,
-				"internalType": "address",
-				"name": "filer",
-				"type": "address"
-			}
-		],
-		"name": "DisputeFiled",
-		"type": "event"
-	},
-	{
-		"anonymous": false,
-		"inputs": [
-			{
-				"indexed": false,
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			},
-			{
-				"indexed": false,
-				"internalType": "address",
-				"name": "rightfulOwner",
-				"type": "address"
-			}
-		],
-		"name": "DisputeResolved",
-		"type": "event"
-	},
-	{
-		"anonymous": false,
-		"inputs": [
-			{
-				"indexed": false,
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			},
-			{
-				"indexed": false,
-				"internalType": "address",
-				"name": "buyer",
-				"type": "address"
-			},
-			{
-				"indexed": false,
-				"internalType": "uint256",
-				"name": "price",
-				"type": "uint256"
-			}
-		],
-		"name": "LandBought",
-		"type": "event"
-	},
-	{
-		"anonymous": false,
-		"inputs": [
-			{
-				"indexed": false,
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			},
-			{
-				"indexed": false,
-				"internalType": "address",
-				"name": "owner",
-				"type": "address"
-			}
-		],
-		"name": "LandRegistered",
-		"type": "event"
-	},
-	{
-		"anonymous": false,
-		"inputs": [
-			{
-				"indexed": false,
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			},
-			{
-				"indexed": false,
-				"internalType": "address",
-				"name": "bank",
-				"type": "address"
-			}
-		],
-		"name": "LienAdded",
-		"type": "event"
-	},
-	{
-		"anonymous": false,
-		"inputs": [
-			{
-				"indexed": false,
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			}
-		],
-		"name": "LienRemoved",
-		"type": "event"
-	},
-	{
-		"anonymous": false,
-		"inputs": [
-			{
-				"indexed": false,
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			},
-			{
-				"indexed": false,
-				"internalType": "uint256",
-				"name": "price",
-				"type": "uint256"
-			}
-		],
-		"name": "ListedForSale",
-		"type": "event"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			},
-			{
-				"internalType": "uint256",
-				"name": "price",
-				"type": "uint256"
-			}
-		],
-		"name": "listForSale",
-		"outputs": [],
-		"stateMutability": "nonpayable",
-		"type": "function"
-	},
-	{
-		"anonymous": false,
-		"inputs": [
-			{
-				"indexed": false,
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			},
-			{
-				"indexed": false,
-				"internalType": "address",
-				"name": "from",
-				"type": "address"
-			},
-			{
-				"indexed": false,
-				"internalType": "address",
-				"name": "to",
-				"type": "address"
-			}
-		],
-		"name": "OwnershipTransferred",
-		"type": "event"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			},
-			{
-				"internalType": "address",
-				"name": "_owner",
-				"type": "address"
-			},
-			{
-				"internalType": "string",
-				"name": "gpsCoordinates",
-				"type": "string"
-			},
-			{
-				"internalType": "uint256",
-				"name": "areaSqMeters",
-				"type": "uint256"
-			},
-			{
-				"internalType": "string",
-				"name": "documentHash",
-				"type": "string"
-			}
-		],
-		"name": "registerLand",
-		"outputs": [],
-		"stateMutability": "nonpayable",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			}
-		],
-		"name": "removeLien",
-		"outputs": [],
-		"stateMutability": "nonpayable",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			},
-			{
-				"internalType": "address",
-				"name": "rightfulOwner",
-				"type": "address"
-			},
-			{
-				"internalType": "string",
-				"name": "resolutionNotes",
-				"type": "string"
-			}
-		],
-		"name": "resolveDispute",
-		"outputs": [],
-		"stateMutability": "nonpayable",
-		"type": "function"
-	},
-	{
-		"anonymous": false,
-		"inputs": [
-			{
-				"indexed": false,
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			}
-		],
-		"name": "SaleCancelled",
-		"type": "event"
-	},
-	{
-		"inputs": [],
-		"name": "bank",
-		"outputs": [
-			{
-				"internalType": "address",
-				"name": "",
-				"type": "address"
-			}
-		],
-		"stateMutability": "view",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "",
-				"type": "uint256"
-			}
-		],
-		"name": "disputes",
-		"outputs": [
-			{
-				"internalType": "address",
-				"name": "filer",
-				"type": "address"
-			},
-			{
-				"internalType": "string",
-				"name": "evidenceHash",
-				"type": "string"
-			},
-			{
-				"internalType": "uint256",
-				"name": "filedAt",
-				"type": "uint256"
-			},
-			{
-				"internalType": "bool",
-				"name": "resolved",
-				"type": "bool"
-			},
-			{
-				"internalType": "string",
-				"name": "resolution",
-				"type": "string"
-			}
-		],
-		"stateMutability": "view",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			}
-		],
-		"name": "getDispute",
-		"outputs": [
-			{
-				"components": [
-					{
-						"internalType": "address",
-						"name": "filer",
-						"type": "address"
-					},
-					{
-						"internalType": "string",
-						"name": "evidenceHash",
-						"type": "string"
-					},
-					{
-						"internalType": "uint256",
-						"name": "filedAt",
-						"type": "uint256"
-					},
-					{
-						"internalType": "bool",
-						"name": "resolved",
-						"type": "bool"
-					},
-					{
-						"internalType": "string",
-						"name": "resolution",
-						"type": "string"
-					}
-				],
-				"internalType": "struct LandRegistry.Dispute",
-				"name": "",
-				"type": "tuple"
-			}
-		],
-		"stateMutability": "view",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			}
-		],
-		"name": "getLandDetails",
-		"outputs": [
-			{
-				"components": [
-					{
-						"internalType": "uint256",
-						"name": "landId",
-						"type": "uint256"
-					},
-					{
-						"internalType": "address",
-						"name": "owner",
-						"type": "address"
-					},
-					{
-						"internalType": "string",
-						"name": "gpsCoordinates",
-						"type": "string"
-					},
-					{
-						"internalType": "uint256",
-						"name": "areaSqMeters",
-						"type": "uint256"
-					},
-					{
-						"internalType": "string",
-						"name": "documentHash",
-						"type": "string"
-					},
-					{
-						"internalType": "bool",
-						"name": "isRegistered",
-						"type": "bool"
-					},
-					{
-						"internalType": "bool",
-						"name": "isForSale",
-						"type": "bool"
-					},
-					{
-						"internalType": "uint256",
-						"name": "salePrice",
-						"type": "uint256"
-					},
-					{
-						"internalType": "bool",
-						"name": "hasLien",
-						"type": "bool"
-					},
-					{
-						"internalType": "bool",
-						"name": "isDisputed",
-						"type": "bool"
-					},
-					{
-						"internalType": "uint256",
-						"name": "registeredAt",
-						"type": "uint256"
-					}
-				],
-				"internalType": "struct LandRegistry.LandParcel",
-				"name": "",
-				"type": "tuple"
-			}
-		],
-		"stateMutability": "view",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			}
-		],
-		"name": "getLandHistory",
-		"outputs": [
-			{
-				"components": [
-					{
-						"internalType": "address",
-						"name": "previousOwner",
-						"type": "address"
-					},
-					{
-						"internalType": "address",
-						"name": "newOwner",
-						"type": "address"
-					},
-					{
-						"internalType": "uint256",
-						"name": "price",
-						"type": "uint256"
-					},
-					{
-						"internalType": "uint256",
-						"name": "timestamp",
-						"type": "uint256"
-					}
-				],
-				"internalType": "struct LandRegistry.OwnershipRecord[]",
-				"name": "",
-				"type": "tuple[]"
-			}
-		],
-		"stateMutability": "view",
-		"type": "function"
-	},
-	{
-		"inputs": [],
-		"name": "government",
-		"outputs": [
-			{
-				"internalType": "address",
-				"name": "",
-				"type": "address"
-			}
-		],
-		"stateMutability": "view",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "",
-				"type": "uint256"
-			},
-			{
-				"internalType": "uint256",
-				"name": "",
-				"type": "uint256"
-			}
-		],
-		"name": "history",
-		"outputs": [
-			{
-				"internalType": "address",
-				"name": "previousOwner",
-				"type": "address"
-			},
-			{
-				"internalType": "address",
-				"name": "newOwner",
-				"type": "address"
-			},
-			{
-				"internalType": "uint256",
-				"name": "price",
-				"type": "uint256"
-			},
-			{
-				"internalType": "uint256",
-				"name": "timestamp",
-				"type": "uint256"
-			}
-		],
-		"stateMutability": "view",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "",
-				"type": "uint256"
-			}
-		],
-		"name": "lands",
-		"outputs": [
-			{
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			},
-			{
-				"internalType": "address",
-				"name": "owner",
-				"type": "address"
-			},
-			{
-				"internalType": "string",
-				"name": "gpsCoordinates",
-				"type": "string"
-			},
-			{
-				"internalType": "uint256",
-				"name": "areaSqMeters",
-				"type": "uint256"
-			},
-			{
-				"internalType": "string",
-				"name": "documentHash",
-				"type": "string"
-			},
-			{
-				"internalType": "bool",
-				"name": "isRegistered",
-				"type": "bool"
-			},
-			{
-				"internalType": "bool",
-				"name": "isForSale",
-				"type": "bool"
-			},
-			{
-				"internalType": "uint256",
-				"name": "salePrice",
-				"type": "uint256"
-			},
-			{
-				"internalType": "bool",
-				"name": "hasLien",
-				"type": "bool"
-			},
-			{
-				"internalType": "bool",
-				"name": "isDisputed",
-				"type": "bool"
-			},
-			{
-				"internalType": "uint256",
-				"name": "registeredAt",
-				"type": "uint256"
-			}
-		],
-		"stateMutability": "view",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "",
-				"type": "uint256"
-			}
-		],
-		"name": "lienHolder",
-		"outputs": [
-			{
-				"internalType": "address",
-				"name": "",
-				"type": "address"
-			}
-		],
-		"stateMutability": "view",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "landId",
-				"type": "uint256"
-			}
-		],
-		"name": "verifyLand",
-		"outputs": [
-			{
-				"internalType": "bool",
-				"name": "isRegistered",
-				"type": "bool"
-			},
-			{
-				"internalType": "bool",
-				"name": "hasCleanTitle",
-				"type": "bool"
-			},
-			{
-				"internalType": "address",
-				"name": "currentOwner",
-				"type": "address"
-			},
-			{
-				"internalType": "uint256",
-				"name": "totalTransfers",
-				"type": "uint256"
-			},
-			{
-				"internalType": "string",
-				"name": "status",
-				"type": "string"
-			}
-		],
-		"stateMutability": "view",
-		"type": "function"
-	}
+  // ── Module 2: Marketplace ───────────────────────────────────────────────
+  "function listForSale(uint256 _id, uint256 _price)",
+  "function cancelListing(uint256 _id)",
+  "function cancelSale(uint256 _id)",          // alias — same as cancelListing
+  "function buyLand(uint256 _id) payable",
 
+  // ── Module 3: Read / History ────────────────────────────────────────────
+  "function getLandHistory(uint256 _id) view returns (tuple(address previousOwner, address newOwner, uint256 price, uint256 timestamp, string transferType)[])",
+  "function getLandsByOwner(address _owner) view returns (uint256[])",
+  "function getAllLands() view returns (uint256[])",
+  "function getTotalLands() view returns (uint256)",
+  "function getForSaleLands() view returns (uint256[])",
+
+  // ── Module 4: Verify ────────────────────────────────────────────────────
+  "function getLandDetails(uint256 _id) view returns (tuple(uint256 landId, address owner, string gpsCoordinates, uint256 areaSqMeters, string documentHash, string title, bool isRegistered, bool isForSale, uint256 salePrice, bool hasLien, bool isDisputed, uint256 registeredAt, uint256 updatedAt))",
+  "function verifyLand(uint256 _id) view returns (tuple(bool isRegistered, bool hasCleanTitle, bool hasLien, bool isDisputed, bool isForSale, address currentOwner, uint256 registeredAt, uint256 totalTransfers, string status))",
+
+  // ── Module 5: Lien ──────────────────────────────────────────────────────
+  "function addLien(uint256 _id)",             // bank address = msg.sender
+  "function removeLien(uint256 _id)",
+  "function lienHolder(uint256) view returns (address)",
+
+  // ── Module 6: Dispute ───────────────────────────────────────────────────
+  "function fileDispute(uint256 _id, string _evidenceHash)",
+  "function resolveDispute(uint256 _id, address _rightfulOwner, string _resolution)",
+  "function getDispute(uint256 _id) view returns (tuple(address filer, string evidenceHash, uint256 filedAt, bool resolved, string resolution))",
+
+  // ── Governance ──────────────────────────────────────────────────────────
+  "function government() view returns (address)",
+  "function bank() view returns (address)",
+  "function platformFeePercent() view returns (uint256)",
+
+  // ── Events ──────────────────────────────────────────────────────────────
+  "event LandRegistered(uint256 indexed landId, address indexed owner)",
+  "event OwnershipTransferred(uint256 indexed landId, address indexed from, address indexed to, uint256 price)",
+  "event ListedForSale(uint256 indexed landId, uint256 price)",
+  "event SaleCancelled(uint256 indexed landId)",
+  "event LandBought(uint256 indexed landId, address indexed buyer, uint256 price)",
+  "event LienAdded(uint256 indexed landId, address indexed bankAddr)",
+  "event LienRemoved(uint256 indexed landId)",
+  "event DisputeFiled(uint256 indexed landId, address indexed claimant)",
+  "event DisputeResolved(uint256 indexed landId, address indexed rightfulOwner)"
 ];
 
-// Connect wallet and return contract instance
+// ─────────────────────────────────────────────────────────────────────────────
+// Contract address — reads contractAddresses.json or falls back to .env
+// ─────────────────────────────────────────────────────────────────────────────
+const getContractAddress = () => {
+  try {
+    // eslint-disable-next-line
+    const addresses = require("./contractAddresses.json");
+    const networkMap = { "31337": "localhost", "80001": "polygon_mumbai", "137": "polygon_mainnet" };
+    const net = networkMap[String(window.__chainId__ || CHAIN_ID)] || "localhost";
+    return addresses[net]?.LandRegistry || process.env.REACT_APP_CONTRACT_ADDRESS || "";
+  } catch {
+    return process.env.REACT_APP_CONTRACT_ADDRESS || "";
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// READ-ONLY provider — no MetaMask needed
+// ─────────────────────────────────────────────────────────────────────────────
+const _makeReadProvider = () =>
+  new ethers.JsonRpcProvider(
+    process.env.REACT_APP_RPC_URL || "http://127.0.0.1:8545",
+    STATIC_NETWORK,
+    { staticNetwork: STATIC_NETWORK }
+  );
+
+export const getReadContract = () => {
+  const address = getContractAddress();
+  if (!address || address.startsWith("PASTE"))
+    throw new Error("Contract address not set — paste it into contractAddresses.json");
+  return new ethers.Contract(address, CONTRACT_ABI, _makeReadProvider());
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WRITE provider — BrowserProvider (MetaMask)
+// ─────────────────────────────────────────────────────────────────────────────
 export const getContract = async () => {
-  if (!window.ethereum) throw new Error('MetaMask not installed. Please install MetaMask.');
-  await window.ethereum.request({ method: 'eth_requestAccounts' });
-  const provider = new ethers.BrowserProvider(window.ethereum);
-  const signer = await provider.getSigner();
-  return new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+  if (!window.ethereum)
+    throw new Error("MetaMask not installed — get it at metamask.io");
+
+  await window.ethereum.request({ method: "eth_requestAccounts" });
+
+  const rawChain = await window.ethereum.request({ method: "eth_chainId" });
+  const parsedChainId = parseInt(rawChain, 16);
+  window.__chainId__ = String(parsedChainId);
+
+  const net = new ethers.Network("land-registry", parsedChainId);
+
+  const provider = new ethers.BrowserProvider(
+    window.ethereum,
+    net,
+    { staticNetwork: net }
+  );
+
+  const signer  = await provider.getSigner();
+  const address = getContractAddress();
+
+  if (!address || address.startsWith("PASTE"))
+    throw new Error("Contract address not configured — check contractAddresses.json or .env");
+
+  return new ethers.Contract(address, CONTRACT_ABI, signer);
 };
 
-// Get read-only contract (no wallet needed)
-export const getReadContract = async () => {
-  if (!window.ethereum) throw new Error('MetaMask not installed.');
-  const provider = new ethers.BrowserProvider(window.ethereum);
-  return new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
-};
-
-// Get current connected wallet address
+// ─────────────────────────────────────────────────────────────────────────────
+// Wallet helpers
+// ─────────────────────────────────────────────────────────────────────────────
 export const getCurrentWallet = async () => {
   if (!window.ethereum) return null;
-  const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+  const accounts = await window.ethereum.request({ method: "eth_accounts" });
   return accounts[0] || null;
 };
 
-// Format wei to ETH string
-export const formatEth = (wei) => {
-  try { return ethers.formatEther(wei) + ' ETH'; }
-  catch { return '0 ETH'; }
+export const connectWallet = async () => {
+  if (!window.ethereum) throw new Error("MetaMask not found");
+  const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+  return accounts[0];
 };
 
-// Format timestamp to readable date
+export const getBalance = async (address) => {
+  try {
+    const provider = _makeReadProvider();
+    const balance  = await provider.getBalance(address);
+    return ethers.formatEther(balance);
+  } catch {
+    return "0";
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Event listeners
+// ─────────────────────────────────────────────────────────────────────────────
+export const onAccountChange = (cb) => {
+  window.ethereum?.on("accountsChanged", (accs) => cb(accs[0] || null));
+};
+
+export const onNetworkChange = (cb) => {
+  window.ethereum?.on("chainChanged", (id) => cb(parseInt(id, 16)));
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Formatting helpers
+// ─────────────────────────────────────────────────────────────────────────────
+export const shortAddr = (addr) =>
+  addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : "—";
+
 export const formatDate = (timestamp) => {
-  if (!timestamp) return 'N/A';
-  return new Date(Number(timestamp) * 1000).toLocaleDateString('en-IN', {
-    year: 'numeric', month: 'long', day: 'numeric'
+  if (!timestamp) return "—";
+  const ms = Number(timestamp) * 1000;
+  if (!ms || isNaN(ms)) return "—";
+  return new Date(ms).toLocaleDateString("en-IN", {
+    day: "numeric", month: "short", year: "numeric"
   });
 };
 
-// Shorten wallet address for display
-export const shortAddr = (addr) => {
-  if (!addr) return '';
-  return addr.slice(0, 6) + '...' + addr.slice(-4);
+export const formatEth = (wei) => {
+  if (wei === undefined || wei === null || wei === "" || wei === 0n || wei === "0") return "—";
+  try {
+    return ethers.formatEther(wei.toString()) + " MATIC";
+  } catch {
+    return String(wei) + " wei";
+  }
 };

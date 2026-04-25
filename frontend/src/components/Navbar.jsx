@@ -1,92 +1,123 @@
 // components/Navbar.jsx
 import { useState, useEffect } from 'react';
-import { getCurrentWallet, shortAddr } from '../utils/contract';
+import { connectWallet, getCurrentWallet, getBalance, onAccountChange, shortAddr } from '../utils/contract';
 
-const pages = [
-  { id: 'home',        label: 'Home' },
-  { id: 'register',   label: 'Register Land' },
-  { id: 'marketplace',label: 'Marketplace' },
-  { id: 'history',    label: 'History' },
-  { id: 'verify',     label: 'Verify' },
-  { id: 'dashboard',  label: 'My Lands' },
-];
-
-export default function Navbar({ currentPage, setPage }) {
-  const [wallet, setWallet] = useState(null);
-  const [connecting, setConnecting] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
+export default function Navbar({ page, setPage }) {
+  const [wallet,     setWallet]     = useState(null);
+  const [balance,    setBalance]    = useState('0');
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
-    getCurrentWallet().then(setWallet);
-    if (window.ethereum) {
-      window.ethereum.on('accountsChanged', (accs) => setWallet(accs[0] || null));
-    }
+    getCurrentWallet().then(async (addr) => {
+      if (addr) {
+        setWallet(addr);
+        const bal = await getBalance(addr);
+        setBalance(parseFloat(bal).toFixed(3));
+      }
+    });
+    onAccountChange(async (addr) => {
+      setWallet(addr);
+      if (addr) {
+        const bal = await getBalance(addr);
+        setBalance(parseFloat(bal).toFixed(3));
+      } else {
+        setBalance('0');
+      }
+    });
   }, []);
 
   const connect = async () => {
-    setConnecting(true);
     try {
-      const accs = await window.ethereum.request({ method: 'eth_requestAccounts' });
-      setWallet(accs[0]);
-    } catch {}
-    setConnecting(false);
+      const addr = await connectWallet();
+      setWallet(addr);
+      const bal = await getBalance(addr);
+      setBalance(parseFloat(bal).toFixed(3));
+    } catch (e) {
+      alert(e.message);
+    }
   };
+
+  const navLinks = [
+    { id: 'home',         label: '🏠 Home' },
+    { id: 'register',    label: '📋 Register' },
+    { id: 'marketplace', label: '🤝 Buy/Sell' },
+    { id: 'history',     label: '📜 History' },
+    { id: 'verify',      label: '✅ Verify' },
+    { id: 'dashboard',   label: '🏦 Dashboard' },
+    { id: 'dispute',     label: '⚖️ Disputes' },  // ← added
+  ];
 
   return (
     <nav style={{
-      position: 'sticky', top: 0, zIndex: 100,
-      background: 'rgba(247,246,242,0.92)',
-      backdropFilter: 'blur(12px)',
-      borderBottom: '1px solid var(--border)',
-      padding: '0 32px',
-      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      height: 64,
+      background: 'var(--white)', borderBottom: '1px solid var(--border)',
+      padding: '0 24px', display: 'flex', alignItems: 'center',
+      justifyContent: 'space-between', height: 60, position: 'sticky',
+      top: 0, zIndex: 100, boxShadow: 'var(--shadow)',
     }}>
       {/* Logo */}
-      <button onClick={() => setPage('home')} style={{
-        background: 'none', border: 'none', display: 'flex', alignItems: 'center', gap: 10,
-      }}>
-        <div style={{
-          width: 32, height: 32, background: 'var(--accent)',
-          borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 16,
-        }}>🏛️</div>
-        <span style={{ fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--text)' }}>
-          LandChain
-        </span>
-      </button>
+      <div
+        onClick={() => setPage('home')}
+        style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 20, cursor: 'pointer', color: 'var(--accent)' }}
+      >
+        🏛️ LandChain
+      </div>
 
-      {/* Desktop nav links */}
-      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-        {pages.filter(p => p.id !== 'home').map(p => (
-          <button key={p.id} onClick={() => setPage(p.id)} style={{
-            background: currentPage === p.id ? 'var(--accent-bg)' : 'none',
-            border: 'none',
-            color: currentPage === p.id ? 'var(--accent)' : 'var(--text2)',
-            padding: '6px 14px',
-            borderRadius: 8,
-            fontSize: 14,
-            fontWeight: currentPage === p.id ? 600 : 400,
-            transition: 'all 0.15s',
-          }}>{p.label}</button>
+      {/* Desktop links */}
+      <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+        {navLinks.map(l => (
+          <button key={l.id} onClick={() => setPage(l.id)} style={{
+            background: page === l.id ? 'var(--accent-bg)' : 'transparent',
+            color: page === l.id ? 'var(--accent)' : 'var(--text2)',
+            border: 'none', padding: '6px 10px', borderRadius: 8,
+            fontSize: 12, fontWeight: page === l.id ? 700 : 500,
+            cursor: 'pointer', transition: '0.15s', whiteSpace: 'nowrap',
+          }}>{l.label}</button>
         ))}
       </div>
 
-      {/* Wallet button */}
-      <button onClick={wallet ? undefined : connect} style={{
-        background: wallet ? 'var(--accent-bg)' : 'var(--accent)',
-        color: wallet ? 'var(--accent)' : '#fff',
-        border: wallet ? '1px solid var(--accent)' : 'none',
-        padding: '8px 18px',
-        borderRadius: 20,
-        fontSize: 13,
-        fontWeight: 600,
-        display: 'flex', alignItems: 'center', gap: 8,
-        transition: 'all 0.2s',
-      }}>
-        <span style={{ fontSize: 10, color: wallet ? 'var(--accent)' : '#fff' }}>●</span>
-        {connecting ? 'Connecting...' : wallet ? shortAddr(wallet) : 'Connect Wallet'}
-      </button>
+      {/* Wallet + hamburger */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        {wallet ? (
+          <div style={{
+            background: 'var(--accent-bg)', border: '1px solid var(--accent)',
+            borderRadius: 20, padding: '6px 14px', fontSize: 13, color: 'var(--accent)', fontWeight: 600,
+            whiteSpace: 'nowrap',
+          }}>
+            {balance} MATIC · {shortAddr(wallet)}
+          </div>
+        ) : (
+          <button onClick={connect} style={{
+            background: 'var(--accent)', color: '#fff', border: 'none',
+            padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+          }}>Connect Wallet</button>
+        )}
+
+        {/* Mobile hamburger */}
+        <button
+          onClick={() => setMobileOpen(o => !o)}
+          style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer' }}
+          className="mobile-menu-btn"
+        >☰</button>
+      </div>
+
+      {/* Mobile dropdown */}
+      {mobileOpen && (
+        <div style={{
+          position: 'absolute', top: 60, left: 0, right: 0,
+          background: 'var(--white)', borderBottom: '1px solid var(--border)',
+          padding: 16, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 200,
+        }}>
+          {navLinks.map(l => (
+            <button key={l.id} onClick={() => { setPage(l.id); setMobileOpen(false); }} style={{
+              background: page === l.id ? 'var(--accent-bg)' : 'transparent',
+              color: page === l.id ? 'var(--accent)' : 'var(--text)',
+              border: 'none', padding: '10px 14px', borderRadius: 8,
+              fontSize: 14, fontWeight: page === l.id ? 700 : 500,
+              cursor: 'pointer', textAlign: 'left',
+            }}>{l.label}</button>
+          ))}
+        </div>
+      )}
     </nav>
   );
 }
